@@ -325,7 +325,7 @@ async function viewPerson(id, alive) {
     <div class="card"><div class="card-head"><h2>ریز ثبت‌ها</h2></div>
       <div class="list">${entriesHtml(list, { showPerson: false, canVoid: isAdmin() })}</div>
     </div>
-    ${isEmployee() ? '<div class="card" id="push"></div>' : ''}`;
+    ${isEmployee() ? `<div class="card" id="push"></div>${versionLine()}` : ''}`;
   if (isEmployee()) renderPushCard(alive);
 }
 
@@ -342,6 +342,7 @@ async function viewLogin(mode) {
           <button class="btn block">ورود</button>
         </form>
         <div class="login-alt"><a href="#/login/admin">ورود مسئول بوفه</a></div>
+        ${versionLine()}
       </div>`;
     onSubmit($('#f'), async (fd) => {
       await api('/api/auth/employee-login', { method: 'POST', body: { nationalCode: toLatinDigits(fd.get('code')) } });
@@ -360,6 +361,7 @@ async function viewLogin(mode) {
         <button class="btn block">${setup ? 'ساخت حساب و ورود' : 'ورود'}</button>
       </form>
       ${setup ? '' : '<div class="login-alt"><a href="#/login">ورود کارکنان با کد ملی</a></div>'}
+      ${versionLine()}
     </div>`;
   onSubmit($('#f'), async (fd) => {
     await api(setup ? '/api/auth/setup' : '/api/auth/login', {
@@ -1084,6 +1086,11 @@ async function viewSettings(_, alive) {
           <div class="row-end"><button class="btn">افزودن مسئول</button></div>
         </form>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>درباره</h2>${state.me.version ? `<span class="badge zero">نسخه ${faDigits(state.me.version)}</span>` : ''}</div>
+      <p class="muted" style="margin:0">بوفه (OfficeBuffet) نرم‌افزار متن‌باز با مجوز MIT است.
+        <a href="${REPO_URL}" target="_blank" rel="noopener">کد و نسخه‌های جدید در GitHub</a></p>
     </div>`;
 
   onSubmit($('#pw'), async (fd) => {
@@ -1497,6 +1504,11 @@ const adminOnly = new Set(['report', 'person', 'order', 'requests', 'payments', 
 const employeeOnly = new Set(['prices']);
 const homeHash = () => (isAdmin() ? '#/order' : isEmployee() ? '#/me' : '#/login');
 let routeSeq = 0;
+
+const REPO_URL = 'https://github.com/Mohamadkhadem/OfficeBuffet';
+/** Small "OfficeBuffet v1.0.0" line linking to the project, shown under login and account pages. */
+const versionLine = () => (state.me.version
+  ? `<p class="version-line"><a href="${REPO_URL}" target="_blank" rel="noopener">بوفه · نسخه ${faDigits(state.me.version)}</a></p>` : '');
 
 async function refreshMe() {
   try { state.me = await api('/api/auth/me'); } catch { state.me = { loggedIn: false }; }

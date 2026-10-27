@@ -91,10 +91,12 @@
 
 ## شروع سریع
 
-پیش‌نیاز: [.NET 10 SDK](https://dotnet.microsoft.com/download)
+**فقط می‌خواهید اجرا کنید؟** فایل `OfficeBuffet-<نسخه>-win-x64.zip` را از [آخرین نسخه (Releases)](https://github.com/Mohamadkhadem/OfficeBuffet/releases/latest) دانلود و از حالت فشرده خارج کنید و `OfficeBuffet.exe` را اجرا کنید. نیازی به نصب .NET نیست. برای اجرا به‌صورت سرویس، بخش [نصب روی سرور](#نصب-روی-سرور) را ببینید.
+
+**از روی سورس**، با [.NET 10 SDK](https://dotnet.microsoft.com/download):
 
 ```bash
-git clone <آدرس-مخزن> OfficeBuffet
+git clone https://github.com/Mohamadkhadem/OfficeBuffet.git
 cd OfficeBuffet
 dotnet run
 ```
@@ -214,6 +216,12 @@ dotnet tool run dotnet-ef migrations add <نام> -o Data/Migrations
 ```
 
 در Visual Studio، پروفایل `https` روی `https://localhost:7080` و `http://localhost:5080` اجرا می‌شود.
+
+**انتشار نسخه‌ی جدید:**
+1. `<Version>` را در `OfficeBuffet.csproj` بالا ببرید. این عدد در برنامه، در «تنظیمات ← درباره»، نشان داده می‌شود.
+2. تغییرات را در [CHANGELOG.md](CHANGELOG.md) بنویسید.
+3. commit را با `vX.Y.Z` تگ بزنید.
+4. فایل zip مستقل را به Release در GitHub پیوست کنید.
 
 ## ساختار پروژه
 

@@ -97,10 +97,14 @@ which is checked against its check digit. It runs entirely on your own server in
 
 ## Quick start
 
-Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
+**Just want to run it?** Download `OfficeBuffet-<version>-win-x64.zip` from the
+[latest release](https://github.com/Mohamadkhadem/OfficeBuffet/releases/latest), unzip it and run
+`OfficeBuffet.exe`. No .NET installation is needed. See [Deployment](#deployment) to run it as a service.
+
+**From source**, with the [.NET 10 SDK](https://dotnet.microsoft.com/download):
 
 ```bash
-git clone <your-fork-url> OfficeBuffet
+git clone https://github.com/Mohamadkhadem/OfficeBuffet.git
 cd OfficeBuffet
 dotnet run
 ```
@@ -232,6 +236,10 @@ dotnet tool run dotnet-ef migrations add <Name> -o Data/Migrations
 ```
 
 In Visual Studio, the `https` launch profile serves `https://localhost:7080` and `http://localhost:5080`.
+
+**Releasing:** bump `<Version>` in `OfficeBuffet.csproj`, which is shown in the app under Settings → About.
+Add an entry to [CHANGELOG.md](CHANGELOG.md), tag the commit as `vX.Y.Z`, and attach the self-contained zip to a
+GitHub release.
 
 ## Project structure
 

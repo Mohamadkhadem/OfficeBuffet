@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -25,6 +26,11 @@ public static class AuthEndpoints
     private static readonly TimeSpan PersistentSession = TimeSpan.FromDays(400);
     private static readonly TimeSpan RenewEvery = TimeSpan.FromDays(7);
 
+    /// <summary>The &lt;Version&gt; from the project file, e.g. "1.0.0" (without the "+commit" build suffix).</summary>
+    public static readonly string AppVersion =
+        (typeof(AuthEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0")
+        .Split('+')[0];
+
     public static void MapAuth(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/auth");
@@ -40,6 +46,7 @@ public static class AuthEndpoints
                 personId = role == Roles.Employee ? EmployeePersonId(ctx.User) : null,
                 personName = role == Roles.Employee ? ctx.User.Identity!.Name : null,
                 needsSetup = !await db.AdminUsers.AnyAsync(),
+                version = AppVersion,
             };
         });
 

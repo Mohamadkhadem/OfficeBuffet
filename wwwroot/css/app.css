@@ -167,6 +167,8 @@ a.list-row:hover { background: var(--surface-2); }
 .badge.off { background: var(--surface-2); color: var(--muted); font-weight: 400; }
 .badge.wait { background: var(--primary-soft); color: var(--primary); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
+.version-line { text-align: center; font-size: 12px; margin: 16px 0 0; }
+.version-line a { color: var(--muted); text-decoration: none; }
 .nudge-done { font-size: 12px; color: var(--warn); max-width: 14em; line-height: 1.5; }
 
 /* Excel import */
