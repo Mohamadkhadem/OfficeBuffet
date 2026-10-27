@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Local data and secrets: database, login keys, push key, HTTPS certificates
+App_Data/
+certs/
+*.db
+*.db-shm
+*.db-wal
+*.pfx
+logs/
+
+# IDE and tool state
+.vs/
+.vscode/
+.idea/
+*.user
+.claude/

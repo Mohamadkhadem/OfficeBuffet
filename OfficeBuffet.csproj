@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>OfficeBuffet</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Deployment guide and service scripts go to the root of the publish folder. -->
+    <None Include="deploy\*" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="LICENSE;THIRD-PARTY-NOTICES.md" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Developer tool manifest (dotnet-ef), not needed on the server. -->
+    <Content Update="dotnet-tools.json" CopyToPublishDirectory="Never" />
+    <!-- Local HTTPS certificate (tools/new-certificate.ps1) never goes into a build or package. -->
+    <Content Remove="certs\**" />
+    <None Remove="certs\**" />
+    <!-- Local data (database, login keys, notification key) must never overwrite the server's on deploy. -->
+    <Content Remove="App_Data\**" />
+    <None Remove="App_Data\**" />
+    <!-- Earlier publish output inside the project folder must not be packaged again. -->
+    <Content Remove="publish\**" />
+    <None Remove="publish\**" />
+  </ItemGroup>
+
+</Project>
+

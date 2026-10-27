@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>بوفه</title>
+  <meta name="description" content="ثبت و گزارش صبحانه و نوشیدنی کارکنان">
+  <meta name="theme-color" content="#2f8f46">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <!-- PNG first: Android's "Add to Home screen" shortcut can't use an SVG icon. -->
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <!-- iPhone home screen icon (180×180, opaque). iOS also looks for /apple-touch-icon.png on its own. -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="بوفه">
+  <link rel="preload" href="/fonts/Vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/app.css">
+  <script>
+    // Apply the saved light/dark choice before first paint so the page doesn't flash.
+    try { const t = localStorage.getItem('officebuffet.theme') ?? localStorage.getItem('officebite.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/report"><img src="/icons/icon.svg" alt=""><span>بوفه</span></a>
+    <div class="top-actions">
+      <div id="account"></div>
+      <button type="button" class="icon-btn" id="theme-btn"></button>
+    </div>
+  </header>
+  <nav class="tabs" id="tabs"></nav>
+  <main id="view"><div class="loading">در حال بارگذاری…</div></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="dialog">
+    <form method="dialog" class="dialog-body">
+      <h3 id="dialog-title"></h3>
+      <p id="dialog-text" class="muted"></p>
+      <input id="dialog-input" autocomplete="off">
+      <div class="row-end">
+        <button type="button" class="btn ghost" id="dialog-cancel">انصراف</button>
+        <button value="ok" class="btn danger" id="dialog-ok">تأیید</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
