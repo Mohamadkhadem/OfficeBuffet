@@ -9,6 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f8f46.svg)](LICENSE)
 ![.NET 10](https://img.shields.io/badge/.NET-10-512bd4.svg)
 ![PWA](https://img.shields.io/badge/PWA-installable-2f8f46.svg)
+[![Support OfficeBuffet](https://img.shields.io/badge/Support-CoffeeBede-6f4e37.svg)](https://www.coffeebede.com/mohammadkhadem)
 ![UI: Persian / RTL](https://img.shields.io/badge/UI-Persian%20%C2%B7%20RTL-555.svg)
 
 **English** · [فارسی](README.fa.md)
@@ -280,11 +281,3 @@ Issues and pull requests are welcome.
 [MIT](LICENSE). Bundled third-party components (the Vazirmatn font, which uses the SIL OFL 1.1 license, and
 the jalaali-js algorithm, which uses the MIT license) are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
----
-
-## Support OfficeBuffet
-
-If OfficeBuffet is useful to you or your team, you can support its continued development:
-
-[![Support OfficeBuffet on CoffeeBede](https://img.shields.io/badge/Support%20OfficeBuffet-CoffeeBede-6f4e37?style=for-the-badge)](https://www.coffeebede.com/mohammadkhadem)
