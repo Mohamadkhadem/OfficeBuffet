@@ -9,8 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f8f46.svg)](LICENSE)
 ![.NET 10](https://img.shields.io/badge/.NET-10-512bd4.svg)
 ![PWA](https://img.shields.io/badge/PWA-installable-2f8f46.svg)
-[![Support OfficeBuffet](https://img.shields.io/badge/Support-CoffeeBede-6f4e37.svg)](https://www.coffeebede.com/mohammadkhadem)
 ![UI: Persian / RTL](https://img.shields.io/badge/UI-Persian%20%C2%B7%20RTL-555.svg)
+
+<a href="https://www.coffeebede.com/mohammadkhadem" target="_blank" rel="noopener noreferrer">
+  <img src="https://www.coffeebede.com/banner.svg?u=mohammadkhadem" width="468" height="100" alt="Buy me a coffee" />
+</a>
 
 **English** · [فارسی](README.fa.md)
 
