@@ -280,3 +280,11 @@ Issues and pull requests are welcome.
 [MIT](LICENSE). Bundled third-party components (the Vazirmatn font, which uses the SIL OFL 1.1 license, and
 the jalaali-js algorithm, which uses the MIT license) are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+---
+
+## Support OfficeBuffet
+
+If OfficeBuffet is useful to you or your team, you can support its continued development:
+
+[![Support OfficeBuffet on CoffeeBede](https://img.shields.io/badge/Support%20OfficeBuffet-CoffeeBede-6f4e37?style=for-the-badge)](https://www.coffeebede.com/mohammadkhadem)
