@@ -11,7 +11,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f8f46.svg)](LICENSE)
 ![.NET 10](https://img.shields.io/badge/.NET-10-512bd4.svg)
 ![PWA](https://img.shields.io/badge/PWA-installable-2f8f46.svg)
-[![حمایت از بوفه](https://img.shields.io/badge/Support-CoffeeBede-6f4e37.svg)](https://www.coffeebede.com/mohammadkhadem)
+
+<p align="center" dir="rtl">
+  <a href="https://www.coffeebede.com/mohammadkhadem" target="_blank" rel="noopener noreferrer">
+    <img
+      src="https://raw.githubusercontent.com/Mohamadkhadem/mohammadkhadem.github.io/main/Mohammad%20Khadem_files/buy-me-a-coffee-fa.svg"
+      alt="یه قهوه برام بخر - حمایت از پروژه‌های متن‌باز محمد خادم"
+      width="100%"
+    />
+  </a>
+</p>
 
 [English](README.md) · **فارسی**
 
