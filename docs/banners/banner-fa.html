@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>OfficeBuffet banner (fa)</title>
+<style>
+  @font-face { font-family: Vazirmatn; src: url("../../wwwroot/fonts/Vazirmatn.woff2") format("woff2"); font-weight: 100 900; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 627px; overflow: hidden; }
+  body {
+    font-family: Vazirmatn, Tahoma, sans-serif; color: #fff;
+    background:
+      radial-gradient(circle at 15% 20%, rgba(255,255,255,.10) 0, transparent 38%),
+      radial-gradient(circle at 85% 110%, rgba(95,199,119,.35) 0, transparent 45%),
+      linear-gradient(135deg, #0d2416 0%, #17462a 55%, #2f8f46 100%);
+    position: relative;
+  }
+  .dots { position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.07) 1.5px, transparent 1.5px); background-size: 26px 26px; }
+  .wrap { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 72px; gap: 56px; }
+  .text { flex: 1; }
+  .brand { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+  .brand svg { width: 76px; height: 76px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+  .brand h1 { font-size: 64px; font-weight: 900; line-height: 1; }
+  .brand .en { font-size: 22px; font-weight: 500; opacity: .75; letter-spacing: .5px; margin-top: 6px; direction: ltr; text-align: right; }
+  .tagline { font-size: 30px; font-weight: 700; line-height: 1.55; margin-bottom: 22px; }
+  .tagline b { color: #a7f0b8; }
+  ul { list-style: none; padding: 0; display: grid; gap: 10px; font-size: 21px; font-weight: 500; }
+  li { display: flex; align-items: center; gap: 12px; }
+  li .i { width: 38px; height: 38px; border-radius: 11px; background: rgba(255,255,255,.12); display: grid; place-items: center; font-size: 20px; }
+  .foot { display: flex; align-items: center; gap: 12px; margin-top: 26px; flex-wrap: wrap; }
+  .chip { font-size: 16px; font-weight: 700; padding: 6px 14px; border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22); }
+  .chip.open { background: #fff; color: #17462a; border-color: #fff; }
+  .repo { font-size: 17px; opacity: .85; direction: ltr; font-weight: 500; }
+
+  /* phone */
+  .phone { width: 300px; height: 560px; border-radius: 44px; background: #0b0f14; padding: 12px; box-shadow: 0 30px 60px rgba(0,0,0,.45), inset 0 0 0 2px #2a323c; position: relative; flex: none; transform: rotate(-4deg); }
+  .screen { width: 100%; height: 100%; border-radius: 34px; background: #f4f6f8; overflow: hidden; color: #1c2430; position: relative; }
+  .notch { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 92px; height: 24px; border-radius: 14px; background: #0b0f14; z-index: 3; }
+  .bar { background: #2f8f46; color: #fff; padding: 44px 16px 12px; display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 17px; }
+  .bar svg { width: 24px; height: 24px; border-radius: 6px; }
+  .notif { position: absolute; top: 40px; right: 10px; left: 10px; background: rgba(255,255,255,.97); border-radius: 18px; padding: 11px 13px; box-shadow: 0 12px 30px rgba(0,0,0,.28); z-index: 2; display: flex; gap: 10px; align-items: flex-start; }
+  .notif svg { width: 34px; height: 34px; border-radius: 9px; flex: none; }
+  .notif .t { font-size: 13px; font-weight: 800; }
+  .notif .b { font-size: 11.5px; color: #4b5563; margin-top: 2px; line-height: 1.5; }
+  .content { padding: 74px 12px 12px; display: grid; gap: 9px; }
+  .card { background: #fff; border-radius: 14px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card h4 { font-size: 12.5px; margin-bottom: 7px; color: #677385; font-weight: 700; }
+  .row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 5px 0; border-top: 1px solid #eef1f4; }
+  .row:first-of-type { border-top: 0; }
+  .price { color: #2f8f46; font-weight: 800; font-size: 12.5px; }
+  .free { background: #e4f4ea; color: #1e7d46; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .req { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .wait { background: #e7f5ea; color: #2f8f46; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .nudge { border: 1px solid #e1e6ec; border-radius: 9px; padding: 3px 8px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .tabs { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-around; padding: 12px 10px 22px; background: #fff; border-top: 1px solid #e1e6ec; font-size: 12px; font-weight: 700; color: #677385; }
+  .tabs .on { color: #2f8f46; background: #e7f5ea; padding: 4px 12px; border-radius: 999px; }
+  .btn { background: #2f8f46; color: #fff; text-align: center; border-radius: 11px; padding: 9px; font-weight: 800; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="dots"></div>
+<div class="wrap">
+  <div class="text">
+    <div class="brand">
+      <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#2f8f46"/><path d="M200 120c-14 18 14 30 0 50M256 112c-14 20 14 34 0 58M312 120c-14 18 14 30 0 50" fill="none" stroke="#e7f5ea" stroke-width="14" stroke-linecap="round" opacity=".8"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><path d="M380 228h18a42 42 0 0 1 0 84h-24" fill="none" stroke="#fff" stroke-width="22"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+      <div><h1>بوفه</h1><div class="en">OfficeBuffet</div></div>
+    </div>
+    <p class="tagline">خداحافظ دفترچه‌ی آبدارخانه 👋<br>سفارش از گوشی، حساب <b>شفاف</b> برای همه</p>
+    <ul>
+      <li><span class="i">📱</span>ورود با کد ملی و سفارش از پشت میز</li>
+      <li><span class="i">🔔</span>اعلان روی گوشی مسئول بوفه و همکاران</li>
+      <li><span class="i">📊</span>گزارش، مانده‌ی حساب و تسویه تا تاریخ</li>
+      <li><span class="i">📥</span>ورود کالاها و افراد از اکسل</li>
+    </ul>
+    <div class="foot">
+      <span class="chip open">متن‌باز · MIT</span>
+      <span class="chip">رایگان</span>
+      <span class="chip">روی سرور خودتان</span>
+      <span class="repo">github.com/Mohamadkhadem/OfficeBuffet</span>
+    </div>
+  </div>
+
+  <div class="phone"><div class="screen">
+    <div class="notch"></div>
+    <div class="notif">
+      <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#2f8f46"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><path d="M380 228h18a42 42 0 0 1 0 84h-24" fill="none" stroke="#fff" stroke-width="22"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+      <div><div class="t">☕ درخواستت دیده شد</div><div class="b">۲ × چای — تا دقایقی دیگر آماده می‌شود.</div></div>
+    </div>
+    <div class="bar">
+      <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#fff" opacity=".2"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+      بوفه
+    </div>
+    <div class="content">
+      <div class="card">
+        <h4>لیست قیمت</h4>
+        <div class="row"><span>چای</span><span class="price">۷٬۰۰۰ تومان</span></div>
+        <div class="row"><span>قهوه</span><span class="price">۲۰٬۰۰۰ تومان</span></div>
+        <div class="row"><span>نیمرو</span><span class="price">۴۵٬۰۰۰ تومان</span></div>
+        <div class="row"><span>آب معدنی</span><span class="free">رایگان</span></div>
+      </div>
+      <div class="btn">ارسال درخواست</div>
+      <div class="card">
+        <h4>درخواست‌های من</h4>
+        <div class="req"><span style="font-size:13px">قهوه</span><span class="wait">در انتظار</span><span class="nudge">👋 یه تلنگر بزن!</span></div>
+      </div>
+    </div>
+    <div class="tabs"><span class="on">قیمت و درخواست</span><span>حساب من</span></div>
+  </div></div>
+</div>
+</body>
+</html>

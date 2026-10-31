@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OfficeBuffet banner (en)</title>
+<style>
+  @font-face { font-family: Vazirmatn; src: url("../../wwwroot/fonts/Vazirmatn.woff2") format("woff2"); font-weight: 100 900; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 627px; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", Vazirmatn, sans-serif; color: #e8edf2;
+    background:
+      radial-gradient(circle at 90% 10%, rgba(95,199,119,.22) 0, transparent 40%),
+      radial-gradient(circle at 0% 100%, rgba(47,143,70,.30) 0, transparent 45%),
+      #0f1318;
+    position: relative;
+  }
+  .grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 40px 40px; }
+  .wrap { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 64px; gap: 48px; }
+  .text { flex: 1; }
+  .brand { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  .brand svg { width: 64px; height: 64px; border-radius: 16px; }
+  .brand h1 { font-size: 46px; font-weight: 800; letter-spacing: -.5px; line-height: 1; }
+  .brand .fa { font-family: Vazirmatn; font-size: 22px; color: #5fc777; font-weight: 800; margin-top: 4px; }
+  .tagline { font-size: 33px; font-weight: 700; line-height: 1.25; letter-spacing: -.3px; margin-bottom: 14px; }
+  .tagline em { font-style: normal; color: #5fc777; }
+  .sub { font-size: 18px; color: #93a0ae; line-height: 1.5; margin-bottom: 24px; max-width: 560px; }
+  .feats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 22px; font-size: 17px; font-weight: 600; margin-bottom: 26px; }
+  .feats div { display: flex; align-items: center; gap: 10px; }
+  .feats span { width: 32px; height: 32px; border-radius: 9px; background: #18321f; display: grid; place-items: center; font-size: 16px; flex: none; }
+  .stack { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tag { font-size: 14px; font-weight: 700; padding: 5px 12px; border-radius: 8px; background: #1f262e; border: 1px solid #2a323c; color: #c9d2db; }
+  .tag.mit { background: #5fc777; color: #0b2412; border-color: #5fc777; }
+  .repo { font-size: 15px; color: #93a0ae; margin-left: 6px; }
+
+  /* manager UI mockup (the app itself is Persian / RTL) */
+  .ui { width: 420px; flex: none; font-family: Vazirmatn; direction: rtl; position: relative; }
+  .win { background: #171c23; border: 1px solid #2a323c; border-radius: 18px; box-shadow: 0 30px 60px rgba(0,0,0,.5); overflow: hidden; }
+  .top { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #2a323c; font-weight: 800; font-size: 16px; }
+  .top svg { width: 24px; height: 24px; border-radius: 6px; }
+  .top .who { margin-right: auto; font-size: 12px; color: #93a0ae; font-weight: 500; }
+  .nav { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #2a323c; font-size: 12px; color: #93a0ae; }
+  .nav b { background: #18321f; color: #5fc777; padding: 3px 10px; border-radius: 999px; }
+  .nav .badge { background: #f2867d; color: #fff; border-radius: 999px; padding: 0 6px; font-size: 10px; margin-right: 4px; }
+  .body { padding: 12px 14px 16px; display: grid; gap: 9px; }
+  .chips { display: flex; gap: 6px; font-size: 12px; }
+  .chips span { border: 1px solid #2a323c; padding: 3px 11px; border-radius: 999px; color: #93a0ae; }
+  .chips .on { border-color: #5fc777; color: #5fc777; background: #18321f; font-weight: 700; }
+  .req { background: #1f262e; border-radius: 12px; padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; align-items: center; }
+  .req .n { font-weight: 800; font-size: 14px; }
+  .req .w { font-size: 12.5px; color: #c9d2db; }
+  .req .m { font-size: 11px; color: #93a0ae; }
+  .req .amt { font-weight: 800; font-size: 13px; text-align: left; direction: ltr; color: #e8edf2; }
+  .acts { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 4px; }
+  .ok { background: #5fc777; color: #0b2412; font-weight: 800; font-size: 12px; padding: 5px 12px; border-radius: 9px; }
+  .no { color: #f2867d; font-weight: 700; font-size: 12px; padding: 5px 6px; }
+  .nudged { background: #3a2f12; color: #f2c96b; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; grid-column: 1 / -1; justify-self: start; }
+  .toast { position: absolute; top: -26px; left: -36px; width: 300px; background: #f4f6f8; color: #1c2430; border-radius: 16px; padding: 11px 13px; box-shadow: 0 18px 40px rgba(0,0,0,.45); display: flex; gap: 10px; align-items: center; transform: rotate(-3deg); }
+  .toast svg { width: 34px; height: 34px; border-radius: 9px; flex: none; }
+  .toast .t { font-size: 13px; font-weight: 800; }
+  .toast .b { font-size: 11.5px; color: #4b5563; }
+</style>
+</head>
+<body>
+<div class="grid"></div>
+<div class="wrap">
+  <div class="text">
+    <div class="brand">
+      <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#2f8f46"/><path d="M200 120c-14 18 14 30 0 50M256 112c-14 20 14 34 0 58M312 120c-14 18 14 30 0 50" fill="none" stroke="#e7f5ea" stroke-width="14" stroke-linecap="round" opacity=".8"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><path d="M380 228h18a42 42 0 0 1 0 84h-24" fill="none" stroke="#fff" stroke-width="22"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+      <div><h1>OfficeBuffet</h1><div class="fa">بوفه</div></div>
+    </div>
+    <p class="tagline">The office pantry, <em>without the notebook.</em></p>
+    <p class="sub">An open-source, self-hosted app: colleagues order from their phones, the pantry gets notified, and everyone's tab stays transparent.</p>
+    <div class="feats">
+      <div><span>📱</span>Order &amp; request from the desk</div>
+      <div><span>🔔</span>Web Push notifications</div>
+      <div><span>🧾</span>Balances &amp; settle-up-to-date</div>
+      <div><span>📥</span>Excel / CSV import</div>
+      <div><span>🔒</span>Your server, one SQLite file</div>
+      <div><span>📅</span>Persian UI · Jalali dates</div>
+    </div>
+    <div class="stack">
+      <span class="tag mit">MIT</span>
+      <span class="tag">.NET 10</span>
+      <span class="tag">SQLite</span>
+      <span class="tag">PWA</span>
+      <span class="repo">github.com/Mohamadkhadem/OfficeBuffet</span>
+    </div>
+  </div>
+
+  <div class="ui">
+    <div class="toast">
+      <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#2f8f46"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><path d="M380 228h18a42 42 0 0 1 0 84h-24" fill="none" stroke="#fff" stroke-width="22"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+      <div><div class="t">👋 سارا هنوز منتظر است</div><div class="b">۲ × قهوه — ۶ دقیقه است منتظر است</div></div>
+    </div>
+    <div class="win">
+      <div class="top">
+        <svg viewBox="0 0 512 512"><rect width="512" height="512" fill="#2f8f46"/><path d="M148 204h232v86c0 64-52 108-116 108s-116-44-116-108z" fill="#fff"/><ellipse cx="264" cy="408" rx="148" ry="20" fill="#fff"/></svg>
+        بوفه <span class="who">مسئول بوفه</span>
+      </div>
+      <div class="nav"><span>ثبت سفارش</span><b>درخواست‌ها<span class="badge">۳</span></b><span>گزارش</span><span>پرداخت و تسویه</span></div>
+      <div class="body">
+        <div class="chips"><span class="on">در انتظار (۳)</span><span>رسیدگی‌شده</span></div>
+        <div class="req">
+          <div class="n">سارا محمدی</div><div class="amt">۴۰٬۰۰۰ تومان</div>
+          <div class="w">۲ × قهوه · کم‌شیرین</div><div></div>
+          <span class="nudged">👋 ۲ بار تلنگر زده</span>
+          <div class="acts"><span class="ok">ثبت سفارش</span><span class="no">رد</span></div>
+        </div>
+        <div class="req">
+          <div class="n">علی رضایی</div><div class="amt">۱۴٬۰۰۰ تومان</div>
+          <div class="w">۲ × چای · اتاق ۲۰۳</div><div></div>
+          <div class="acts"><span class="ok">ثبت سفارش</span><span class="no">رد</span></div>
+        </div>
+        <div class="req">
+          <div class="n">نرگس احمدی</div><div class="amt">۴۵٬۰۰۰ تومان</div>
+          <div class="w">نیمرو</div><div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 // Caches the app shell so the PWA opens instantly and installs; API calls always go to the network.
-const CACHE = 'officebuffet-v18';
+const CACHE = 'officebuffet-v21';
 const SHELL = [
   '/', '/index.html', '/css/app.css', '/js/app.js', '/js/jalali.js', '/fonts/Vazirmatn.woff2',
   '/manifest.webmanifest', '/apple-touch-icon.png', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',

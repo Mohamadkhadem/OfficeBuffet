@@ -22,6 +22,73 @@ public static class AdminEndpoints
         MapPayments(g);
         MapSettlements(g);
         MapUsers(g);
+        MapCards(g);
+    }
+
+    private static void MapCards(RouteGroupBuilder g)
+    {
+        g.MapGet("/cards", async (AppDb db) => await db.PaymentCards.OrderBy(c => c.Id).ToListAsync());
+
+        g.MapPost("/cards", async (PaymentCardRequest req, AppDb db) =>
+        {
+            var (card, error) = await ValidateCard(req, null, db);
+            if (error != null) return error == CheckDigitFailed ? CheckDigitResult() : ApiErrors.Bad(error);
+            db.PaymentCards.Add(card!);
+            await db.SaveChangesAsync();
+            return Results.Ok(card);
+        });
+
+        g.MapPut("/cards/{id:int}", async (int id, PaymentCardRequest req, AppDb db) =>
+        {
+            var card = await db.PaymentCards.FindAsync(id);
+            if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
+            var (valid, error) = await ValidateCard(req, id, db);
+            if (error != null) return error == CheckDigitFailed ? CheckDigitResult() : ApiErrors.Bad(error);
+            card.Title = valid!.Title;
+            card.Number = valid.Number;
+            await db.SaveChangesAsync();
+            return Results.Ok(card);
+        });
+
+        g.MapDelete("/cards/{id:int}", async (int id, AppDb db) =>
+        {
+            var card = await db.PaymentCards.FindAsync(id);
+            if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
+            db.PaymentCards.Remove(card);
+            await db.SaveChangesAsync();
+            return Results.Ok();
+        });
+    }
+
+    private static async Task<(PaymentCard? Card, string? Error)> ValidateCard(PaymentCardRequest req, int? id, AppDb db)
+    {
+        var title = (req.Title ?? "").Trim();
+        if (title.Length == 0) return (null, "عنوان کارت را وارد کنید (مثلاً «کارت صبحانه»).");
+        if (title.Length > 60) return (null, "عنوان کارت حداکثر ۶۰ حرف است.");
+        var number = NationalCode.Normalize(req.Number); // keeps only the digits, Persian or Latin
+        if (number.Length != 16) return (null, "شماره کارت باید ۱۶ رقم باشد.");
+        if (await db.PaymentCards.AnyAsync(c => c.Number == number && c.Id != id)) return (null, "این شماره کارت قبلاً ثبت شده است.");
+        if (!req.Force && !IsValidCardNumber(number)) return (null, CheckDigitFailed);
+        return (new PaymentCard { Title = title, Number = number }, null);
+    }
+
+    private const string CheckDigitFailed = "شماره کارت با رقم کنترل جور نیست؛ احتمالاً یک رقم اشتباه تایپ شده است.";
+
+    /// <summary>A typo is likely but not certain, so the page asks the admin and can resend with Force.</summary>
+    private static IResult CheckDigitResult() =>
+        Results.BadRequest(new { error = CheckDigitFailed, confirm = true });
+
+    /// <summary>Luhn check digit, which Iranian bank card numbers follow; catches most typos.</summary>
+    private static bool IsValidCardNumber(string digits)
+    {
+        var sum = 0;
+        for (var i = 0; i < digits.Length; i++)
+        {
+            var d = digits[digits.Length - 1 - i] - '0';
+            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+        }
+        return sum % 10 == 0;
     }
 
     private static void MapItems(RouteGroupBuilder g)

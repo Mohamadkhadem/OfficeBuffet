@@ -18,6 +18,16 @@ public class Person
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>A bank card colleagues pay into, shown with its title on their account page (e.g. "کارت صبحانه").</summary>
+public class PaymentCard
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = "";
+    /// <summary>16 digits, no separators.</summary>
+    public string Number { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class Item
 {
     public int Id { get; set; }

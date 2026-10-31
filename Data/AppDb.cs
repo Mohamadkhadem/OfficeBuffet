@@ -13,6 +13,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<Settlement> Settlements => Set<Settlement>();
     public DbSet<PantryRequest> Requests => Set<PantryRequest>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
+    public DbSet<PaymentCard> PaymentCards => Set<PaymentCard>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -28,6 +29,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         b.Entity<Person>().HasIndex(x => x.NationalCode).IsUnique();
         b.Entity<Person>().Property(x => x.NationalCode).HasMaxLength(10);
         b.Entity<Item>().HasIndex(x => x.Name).IsUnique();
+        b.Entity<PaymentCard>().HasIndex(x => x.Number).IsUnique();
         b.Entity<Order>().HasIndex(x => x.CreatedAt);
         b.Entity<Order>().HasIndex(x => x.PersonId);
         b.Entity<Payment>().HasIndex(x => x.CreatedAt);

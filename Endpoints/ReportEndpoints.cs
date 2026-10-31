@@ -110,6 +110,10 @@ public static class ReportEndpoints
         g.MapGet("/prices", async (AppDb db) =>
             await db.Items.Where(i => i.IsActive).OrderBy(i => i.Category).ThenBy(i => i.Name)
                 .Select(i => new { i.Id, i.Name, i.Category, i.Price }).ToListAsync());
+
+        // Cards to pay into, shown on everyone's account page.
+        g.MapGet("/cards", async (AppDb db) =>
+            await db.PaymentCards.OrderBy(c => c.Id).Select(c => new { c.Id, c.Title, c.Number }).ToListAsync());
     }
 
     private static IQueryable<Order> InRange(IQueryable<Order> q, DateTime? start, DateTime? end)

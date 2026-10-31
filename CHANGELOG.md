@@ -4,6 +4,15 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.1.0] - 2026-10-31
+
+### Added
+- Bank cards: the pantry manager defines titled card numbers in Settings; colleagues see them under their
+  balance on the account page and copy a number with one tap. Numbers are checked with the Luhn digit
+  (with a confirm-to-keep for unusual numbers).
+- "Clear" button on the request page and on the manager's order screen that empties the selected items and
+  the note in one tap.
+
 ## [1.0.0] - 2026-10-28
 
 First public release.
@@ -35,4 +44,5 @@ First public release.
 - Self-contained Windows build; Windows service scripts and IIS `web.config` included.
 - `tools/new-certificate.ps1` to create a private CA and HTTPS certificate for the office network.
 
+[1.1.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.0.0

@@ -11,6 +11,8 @@ public record OrderRequest(int PersonId, List<OrderLine> Lines, string? Note, st
 public record PaymentRequest(int PersonId, long Amount, string? Note);
 public record SettlementRequest(int PersonId, string Until, string UntilLabel, string? Note);
 public record VoidRequest(string? Reason);
+/// <param name="Force">Save even if the number fails the Luhn check (the admin confirmed it is right).</param>
+public record PaymentCardRequest(string? Title, string? Number, bool Force = false);
 public record NewPantryRequest(List<OrderLine> Lines, string? Note);
 public record PushKeys(string P256dh, string Auth);
 public record PushSubscribeRequest(string Endpoint, PushKeys Keys);

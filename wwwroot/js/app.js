@@ -102,7 +102,7 @@ async function api(path, { method = 'GET', body } = {}) {
   }
   if (res.status === 429) throw new Error('تعداد تلاش‌ها زیاد بود؛ چند دقیقه بعد دوباره امتحان کنید.');
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || 'خطایی رخ داد.');
+  if (!res.ok) throw Object.assign(new Error(data?.error || 'خطایی رخ داد.'), { data });
   return data;
 }
 
@@ -297,9 +297,10 @@ async function viewReport(_, alive) {
 
 async function viewPerson(id, alive) {
   if (isEmployee()) id = state.me.personId;
-  const [summary, entries] = await Promise.all([
+  const [summary, entries, cards] = await Promise.all([
     api('/api/report/summary?' + rangeQuery(state.period)),
     api('/api/report/entries?' + rangeQuery(state.period, { personId: id })),
+    isEmployee() ? api('/api/report/cards') : [],
   ]);
   if (!alive()) return;
   const list = mergeEntries(entries);
@@ -315,6 +316,7 @@ async function viewPerson(id, alive) {
       </div>
       <div class="balance-big">${money(Math.abs(p.balance))}</div>
       ${balanceBadge(p.balance)}
+      ${payCardsHtml(cards)}
     </div>
     ${chipsHtml()}
     <div class="stats">
@@ -436,6 +438,7 @@ async function viewOrder(_, alive) {
     $('#cnt').textContent = count ? `${fa(count)} قلم انتخاب شده` : 'هنوز چیزی انتخاب نشده';
     $('#tot').innerHTML = money(total);
     $('#submit').disabled = count === 0;
+    $('#clear-cart').hidden = count === 0;
   };
 
   const setQty = (id, qty) => {
@@ -478,7 +481,10 @@ async function viewOrder(_, alive) {
         <label style="margin-top:14px">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً بدون شکر"></label>
         <div class="order-bar">
           <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
-          <button class="btn" id="submit">ثبت سفارش</button>
+          <div class="order-actions">
+            <button type="button" class="btn ghost" id="clear-cart" hidden title="صفر کردن همه‌ی اقلام انتخاب‌شده">🗑️ خالی کردن</button>
+            <button class="btn" id="submit">ثبت سفارش</button>
+          </div>
         </div>
       </div>`;
     updateBar();
@@ -495,6 +501,13 @@ async function viewOrder(_, alive) {
     const pb = e.target.closest('[data-person]');
     if (pb) return selectPerson(activePeople.find((p) => p.id == pb.dataset.person));
     if (e.target.closest('#change')) return selectPerson(null);
+    if (e.target.closest('#clear-cart')) {
+      // Empties the items for the selected person; the person and the date stay as they are.
+      [...cart.keys()].forEach((id) => setQty(id, 0));
+      $('#note').value = '';
+      toast('سبد خالی شد.');
+      return;
+    }
     const tile = e.target.closest('[data-item]');
     if (tile) {
       const id = Number(tile.dataset.item);
@@ -1062,6 +1075,7 @@ async function viewSettings(_, alive) {
   view.innerHTML = `
     <div class="page-title"><h1>تنظیمات</h1></div>
     <div class="card" id="push"></div>
+    <div class="card" id="cards"></div>
     <div class="cols">
       <div class="card">
         <div class="card-head"><h2>تغییر رمز عبور</h2></div>
@@ -1110,6 +1124,112 @@ async function viewSettings(_, alive) {
     catch (err) { toast(err.message, true); }
   });
   renderPushCard(alive);
+  renderCardsAdmin($('#cards'), alive);
+}
+
+// ---------- bank cards colleagues pay into ----------
+/** "6219861904764809" → "6219 8619 0476 4809" in Persian digits. */
+const cardNumberText = (n) => faDigits(String(n).replace(/(\d{4})(?=\d)/g, '$1 '));
+
+/** Copies text to the clipboard; also works on plain http, where navigator.clipboard is unavailable. */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall back below */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length); // iOS
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* not supported */ }
+  ta.remove();
+  return ok;
+}
+
+/** Card list with a copy action on each number (colleague's account page). */
+const payCardsHtml = (cards) => (cards.length ? `
+  <div class="pay-cards">
+    <div class="muted" style="font-size:13px">برای پرداخت، روی شماره کارت بزنید تا کپی شود:</div>
+    ${cards.map((c) => `
+      <button type="button" class="pay-card" data-copy="${esc(c.number)}" title="کپی شماره کارت">
+        <span class="t">${esc(c.title)}</span>
+        <span class="n">${cardNumberText(c.number)}</span>
+        <span class="c">📋 کپی</span>
+      </button>`).join('')}
+  </div>` : '');
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-copy]');
+  if (!btn) return;
+  const ok = await copyText(btn.dataset.copy);
+  toast(ok ? `شماره کارت کپی شد: ${cardNumberText(btn.dataset.copy)}` : 'کپی نشد؛ شماره را دستی انتخاب کنید.', !ok);
+  if (ok) { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500); }
+});
+
+/** Settings card where the manager defines the bank cards and their titles. */
+async function renderCardsAdmin(card, alive) {
+  const cards = await api('/api/admin/cards');
+  if (!alive()) return;
+  let editingId = null;
+  card.innerHTML = `
+    <div class="card-head"><h2>شماره کارت‌ها</h2></div>
+    <p class="muted" style="margin-top:0">کارت‌هایی که همکاران به آن‌ها پرداخت می‌کنند. در «حساب من» هر همکار، زیر مانده‌ی حساب، با عنوانشان نمایش داده می‌شوند و با یک ضربه کپی می‌شوند.</p>
+    <div class="list">
+      ${cards.length ? cards.map((c) => `
+        <div class="list-row">
+          <div class="grow"><div class="title">${esc(c.title)}</div><div class="sub card-no">${cardNumberText(c.number)}</div></div>
+          <div class="actions">
+            <button class="btn link small" data-card-edit="${c.id}">ویرایش</button>
+            <button class="btn link danger small" data-card-del="${c.id}">حذف</button>
+          </div>
+        </div>`).join('') : '<div class="empty">هنوز کارتی تعریف نشده است.</div>'}
+    </div>
+    <form class="form" id="card-form" style="margin-top:12px">
+      <div class="form-grid two">
+        <label>عنوان کارت<input name="title" maxlength="60" required placeholder="مثلاً کارت صبحانه" autocomplete="off"></label>
+        <label>شماره کارت<input name="number" inputmode="numeric" maxlength="25" required placeholder="۱۶ رقم" autocomplete="off" class="code-input"></label>
+      </div>
+      <div class="row-end">
+        <button type="button" class="btn ghost" id="card-cancel" hidden>انصراف</button>
+        <button class="btn" id="card-save">افزودن کارت</button>
+      </div>
+    </form>`;
+
+  const form = $('#card-form', card);
+  const setEditing = (c) => {
+    editingId = c?.id ?? null;
+    form.reset();
+    if (c) { form.elements.title.value = c.title; form.elements.number.value = faDigits(c.number); form.elements.title.focus(); }
+    $('#card-save', card).textContent = c ? 'ذخیره' : 'افزودن کارت';
+    $('#card-cancel', card).hidden = !c;
+  };
+  $('#card-cancel', card).onclick = () => setEditing(null);
+  card.onclick = async (e) => {
+    const edit = e.target.closest('[data-card-edit]');
+    if (edit) return setEditing(cards.find((c) => c.id == edit.dataset.cardEdit));
+    const del = e.target.closest('[data-card-del]');
+    if (!del) return;
+    const c = cards.find((x) => x.id == del.dataset.cardDel);
+    if (!confirm(`کارت «${c.title}» حذف شود؟`)) return;
+    try { await api(`/api/admin/cards/${c.id}`, { method: 'DELETE' }); toast('کارت حذف شد.'); renderCardsAdmin(card, alive); }
+    catch (err) { toast(err.message, true); }
+  };
+  onSubmit(form, async (fd) => {
+    const body = { title: fd.get('title'), number: toLatinDigits(fd.get('number')) };
+    const save = () => api(editingId ? `/api/admin/cards/${editingId}` : '/api/admin/cards', { method: editingId ? 'PUT' : 'POST', body });
+    try { await save(); }
+    catch (err) {
+      // Number fails the check digit: probably a typo, but let the manager keep it if they are sure.
+      if (!err.data?.confirm || !confirm(`${err.message}\n\nشماره را دوباره نگاه کنید. اگر مطمئنید درست است، «OK» را بزنید تا ثبت شود.`)) throw err;
+      body.force = true;
+      await save();
+    }
+    toast(editingId ? 'کارت ذخیره شد.' : 'کارت اضافه شد.');
+    renderCardsAdmin(card, alive);
+  });
 }
 
 // ---------- pantry requests ----------
@@ -1148,7 +1268,10 @@ async function viewPrices(_, alive) {
         <label style="margin-top:14px">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً کم‌شیرین، اتاق ۲۰۳"></label>
         <div class="order-bar">
           <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
-          <button class="btn" id="submit">ارسال درخواست</button>
+          <div class="order-actions">
+            <button type="button" class="btn ghost" id="clear-cart" hidden title="صفر کردن همه‌ی اقلام انتخاب‌شده">🗑️ خالی کردن</button>
+            <button class="btn" id="submit">ارسال درخواست</button>
+          </div>
         </div>` : '<div class="empty">هنوز کالایی تعریف نشده است.</div>'}
     </div>
     <div class="card"><div class="card-head"><h2>درخواست‌های من</h2></div><div class="list" id="mine"></div></div>`;
@@ -1159,6 +1282,11 @@ async function viewPrices(_, alive) {
     $('#cnt').textContent = count ? `${fa(count)} قلم انتخاب شده` : 'هنوز چیزی انتخاب نشده';
     $('#tot').innerHTML = money(sum(lines, ([id, q]) => items.find((i) => i.id === id).price * q));
     $('#submit').disabled = count === 0;
+    $('#clear-cart').hidden = count === 0;
+  };
+  const clearCart = () => {
+    [...cart.keys()].forEach((id) => setQty(id, 0));
+    $('#note').value = '';
   };
   const setQty = (id, qty) => {
     qty = Math.max(0, Math.min(10, qty));
@@ -1233,6 +1361,11 @@ async function viewPrices(_, alive) {
       renderMine();
       return;
     }
+    if (e.target.closest('#clear-cart')) {
+      clearCart();
+      toast('سبد خالی شد.');
+      return;
+    }
     const cancel = e.target.closest('[data-cancel]');
     if (cancel) {
       if (!confirm('این درخواست لغو شود؟')) return;
@@ -1247,8 +1380,7 @@ async function viewPrices(_, alive) {
       try {
         await api('/api/requests', { method: 'POST', body: { lines, note: $('#note').value } });
         toast('درخواست شما برای مسئول بوفه فرستاده شد.');
-        [...cart.keys()].forEach((id) => setQty(id, 0));
-        $('#note').value = '';
+        clearCart();
         renderMine();
       } catch (err) {
         toast(err.message, true);

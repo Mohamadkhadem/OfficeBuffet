@@ -71,6 +71,8 @@ which is checked against its check digit. It runs entirely on your own server in
 - **Excel / CSV import** of items and people with column mapping and a preview. Nothing is duplicated
   (Arabic ي/ك and Persian ی/ک are treated as the same letter) and existing prices are updated. Invalid or
   duplicate national IDs are listed for fixing, and leading zeros dropped by Excel are restored.
+- **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
+  appear under each colleague's balance, and tapping a number copies it.
 - Multiple manager accounts, password change, and light and dark themes.
 
 ### Built to be trusted

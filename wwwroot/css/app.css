@@ -167,6 +167,20 @@ a.list-row:hover { background: var(--surface-2); }
 .badge.off { background: var(--surface-2); color: var(--muted); font-weight: 400; }
 .badge.wait { background: var(--primary-soft); color: var(--primary); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
+/* Bank cards on the account page: tap a number to copy it */
+.pay-cards { display: grid; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pay-card {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "t c" "n c"; gap: 2px 12px; align-items: center;
+  width: 100%; text-align: start; font: inherit; color: inherit; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; transition: .15s;
+}
+.pay-card:hover { border-color: var(--primary); }
+.pay-card .t { grid-area: t; font-size: 13px; color: var(--muted); font-weight: 600; }
+.pay-card .n { grid-area: n; font-size: 19px; font-weight: 800; letter-spacing: .5px; direction: ltr; text-align: right; }
+.pay-card .c { grid-area: c; font-size: 12px; font-weight: 700; color: var(--primary); background: var(--primary-soft); padding: 4px 10px; border-radius: 999px; }
+.pay-card.copied { border-color: var(--primary); background: var(--primary-soft); }
+.pay-card.copied .c { background: var(--primary); color: var(--primary-ink); }
+.card-no { direction: ltr; text-align: right; letter-spacing: .5px; }
 .version-line { text-align: center; font-size: 12px; margin: 16px 0 0; }
 .version-line a { color: var(--muted); text-decoration: none; }
 .nudge-done { font-size: 12px; color: var(--warn); max-width: 14em; line-height: 1.5; }
@@ -264,6 +278,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   background: var(--surface); border-top: 1px solid var(--border);
 }
 .order-bar .total { font-size: 17px; font-weight: 700; }
+.order-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ---------- toast & dialog ---------- */
 #toast {

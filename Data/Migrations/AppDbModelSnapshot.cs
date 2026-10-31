@@ -238,6 +238,31 @@ namespace OfficeBuffet.Data.Migrations
                     b.ToTable("Payments");
                 });
 
+            modelBuilder.Entity("OfficeBuffet.Data.PaymentCard", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Number")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Number")
+                        .IsUnique();
+
+                    b.ToTable("PaymentCards");
+                });
+
             modelBuilder.Entity("OfficeBuffet.Data.Person", b =>
                 {
                     b.Property<int>("Id")
