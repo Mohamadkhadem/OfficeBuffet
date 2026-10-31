@@ -11,6 +11,18 @@
 ![PWA](https://img.shields.io/badge/PWA-installable-2f8f46.svg)
 ![UI: Persian / RTL](https://img.shields.io/badge/UI-Persian%20%C2%B7%20RTL-555.svg)
 
+
+<p align="center">
+  <a href="https://www.coffeebede.com/mohammadkhadem" target="_blank" rel="noopener noreferrer">
+    <img
+      src="https://raw.githubusercontent.com/Mohamadkhadem/mohammadkhadem.github.io/main/Mohammad%20Khadem_files/buy-me-a-coffee.svg"
+      alt="Buy me a coffee - Support my open-source projects"
+      width="100%"
+    />
+  </a>
+</p>
+
+
 **English** · [فارسی](README.fa.md)
 
 </div>
