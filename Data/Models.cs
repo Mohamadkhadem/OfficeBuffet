@@ -15,7 +15,43 @@ public class Person
     /// <summary>10-digit Iranian national code; the employee logs in with it. Null = cannot log in.</summary>
     public string? NationalCode { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Optional staff group; menu categories can be limited to one group.</summary>
+    public int? GroupId { get; set; }
+    public PersonGroup? Group { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>A group of staff (e.g. "شیفت شب"), used to offer some menu categories only to them.</summary>
+public class PersonGroup
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// A menu section (e.g. "صبحانه"). Optionally open only between two times of day, and optionally only for
+/// one staff group; without those it is open all day, for everyone.
+/// </summary>
+public class MenuCategory
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
+    /// <summary>Local (server) time of day the category opens; null together with <see cref="EndTime"/> = always open.</summary>
+    public TimeOnly? StartTime { get; set; }
+    /// <summary>Closing time (exclusive). Earlier than <see cref="StartTime"/> means the window runs past midnight.</summary>
+    public TimeOnly? EndTime { get; set; }
+    public int? PersonGroupId { get; set; }
+    public PersonGroup? PersonGroup { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public bool IsOpenAt(TimeOnly time) =>
+        StartTime is not { } start || EndTime is not { } end
+        || (start <= end ? time >= start && time < end : time >= start || time < end);
+
+    /// <summary>Whether a person in this group may order from the category (no group = everyone).</summary>
+    public bool IsFor(int? groupId) => PersonGroupId == null || PersonGroupId == groupId;
 }
 
 /// <summary>A bank card colleagues pay into, shown with its title on their account page (e.g. "کارت صبحانه").</summary>
@@ -32,7 +68,9 @@ public class Item
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";
-    public string Category { get; set; } = "";
+    /// <summary>Menu category; null = "سایر" (always open, for everyone).</summary>
+    public int? CategoryId { get; set; }
+    public MenuCategory? Category { get; set; }
     /// <summary>Price in Toman.</summary>
     public long Price { get; set; }
     public bool IsActive { get; set; } = true;

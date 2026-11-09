@@ -181,6 +181,24 @@ a.list-row:hover { background: var(--surface-2); }
 .pay-card.copied { border-color: var(--primary); background: var(--primary-soft); }
 .pay-card.copied .c { background: var(--primary); color: var(--primary-ink); }
 .card-no { direction: ltr; text-align: right; letter-spacing: .5px; }
+/* Request lines: "how many of what" at a glance */
+.lines { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.line { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 4px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 14px; font-weight: 600; }
+.line .q { min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; display: grid; place-items: center; background: var(--primary); color: var(--primary-ink); font-size: 15px; font-weight: 800; }
+.lines.big .line { font-size: 16px; padding: 4px 12px 4px 5px; }
+.lines.big .line .q { min-width: 32px; height: 32px; font-size: 18px; }
+.qty-badge { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; margin-inline-end: 6px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 800; vertical-align: middle; }
+.req-note { margin: 2px 0 4px; padding: 4px 10px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 13px; font-weight: 700; display: inline-block; }
+
+/* Menu sections on the request page: closed outside their opening hours */
+.menu-section .closed-note { display: none; font-size: 12px; font-weight: 700; color: var(--danger); }
+.menu-section.closed .closed-note { display: inline; }
+.menu-section.closed .items-grid { opacity: .45; filter: grayscale(1); }
+.menu-section.closed .stepper button { cursor: not-allowed; }
+.cat-title .badge { margin-inline-start: 6px; vertical-align: middle; }
+
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.inline-form input { flex: 1; min-width: 180px; }
 .version-line { text-align: center; font-size: 12px; margin: 16px 0 0; }
 .version-line a { color: var(--muted); text-decoration: none; }
 .nudge-done { font-size: 12px; color: var(--warn); max-width: 14em; line-height: 1.5; }

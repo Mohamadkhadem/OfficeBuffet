@@ -59,8 +59,17 @@ public static class RequestEndpoints
                 return ApiErrors.Bad($"شما {MaxPendingPerPerson} درخواست در انتظار دارید؛ صبر کنید تا رسیدگی شوند.");
 
             var itemIds = lines.Select(l => l.ItemId).ToList();
-            var items = await db.Items.Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
+            var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
             if (items.Count != itemIds.Count) return ApiErrors.Bad("یکی از اقلام انتخاب‌شده معتبر یا فعال نیست.");
+
+            // Menu rules: a category limited to a staff group, or open only at certain hours.
+            var groupId = await db.People.Where(p => p.Id == personId).Select(p => p.GroupId).FirstOrDefaultAsync();
+            var now = MenuEndpoints.Now();
+            foreach (var category in items.Values.Select(i => i.Category).OfType<MenuCategory>().DistinctBy(c => c.Id))
+            {
+                if (!category.IsFor(groupId)) return ApiErrors.Bad($"دسته‌ی «{category.Name}» برای گروه شما نیست.");
+                if (!category.IsOpenAt(now)) return ApiErrors.Bad(MenuEndpoints.ClosedMessage(category));
+            }
 
             var request = new PantryRequest
             {
@@ -239,8 +248,9 @@ public static class RequestEndpoints
             }).ToList(),
         });
 
+    // "۲ عدد قهوه" rather than "2 × قهوه": the "×" form gets reordered in right-to-left notifications.
     private static string Describe(PantryRequest r) =>
-        string.Join("، ", r.Lines.Select(l => l.Quantity == 1 ? l.ItemName : $"{l.Quantity} × {l.ItemName}"));
+        string.Join("، ", r.Lines.Select(l => $"{l.Quantity} عدد {l.ItemName}"));
 
     private static int AdminId(ClaimsPrincipal user) => int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 

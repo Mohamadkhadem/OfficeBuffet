@@ -93,17 +93,20 @@ public static class AdminEndpoints
 
     private static void MapItems(RouteGroupBuilder g)
     {
+        // Items in menu order (category order, then name); uncategorized ("سایر") last.
         g.MapGet("/items", async (AppDb db) =>
-            await db.Items.OrderBy(i => i.Category).ThenBy(i => i.Name).ToListAsync());
+            await db.Items.OrderBy(i => i.Category == null).ThenBy(i => i.Category!.SortOrder).ThenBy(i => i.Name)
+                .Select(i => new { i.Id, i.Name, i.CategoryId, category = i.Category!.Name, i.Price, i.IsActive })
+                .ToListAsync());
 
         g.MapPost("/items", async (ItemRequest req, AppDb db) =>
         {
             var error = await ValidateItem(req, null, db);
             if (error != null) return ApiErrors.Bad(error);
-            var item = new Item { Name = req.Name.Trim(), Category = (req.Category ?? "").Trim(), Price = req.Price, IsActive = req.IsActive };
+            var item = new Item { Name = req.Name.Trim(), CategoryId = req.CategoryId, Price = req.Price, IsActive = req.IsActive };
             db.Items.Add(item);
             await db.SaveChangesAsync();
-            return Results.Ok(item);
+            return Results.Ok(new { item.Id });
         });
 
         g.MapPut("/items/{id:int}", async (int id, ItemRequest req, AppDb db) =>
@@ -113,11 +116,11 @@ public static class AdminEndpoints
             var error = await ValidateItem(req, id, db);
             if (error != null) return ApiErrors.Bad(error);
             item.Name = req.Name.Trim();
-            item.Category = (req.Category ?? "").Trim();
+            item.CategoryId = req.CategoryId;
             item.Price = req.Price;
             item.IsActive = req.IsActive;
             await db.SaveChangesAsync();
-            return Results.Ok(item);
+            return Results.Ok(new { item.Id });
         });
 
         g.MapDelete("/items/{id:int}", async (int id, AppDb db) =>
@@ -138,6 +141,8 @@ public static class AdminEndpoints
         if (name.Length == 0) return "نام کالا را وارد کنید.";
         if (req.Price < 0) return "قیمت نمی‌تواند منفی باشد.";
         if (await db.Items.AnyAsync(i => i.Name == name && i.Id != id)) return "کالایی با این نام وجود دارد.";
+        if (req.CategoryId is { } categoryId && !await db.MenuCategories.AnyAsync(c => c.Id == categoryId))
+            return "دسته‌ی انتخاب‌شده وجود ندارد.";
         return null;
     }
 
@@ -149,7 +154,7 @@ public static class AdminEndpoints
         {
             var error = await ValidatePerson(req, null, db);
             if (error != null) return ApiErrors.Bad(error);
-            var person = new Person { Name = req.Name.Trim(), NationalCode = NormalizedCode(req), IsActive = req.IsActive };
+            var person = new Person { Name = req.Name.Trim(), NationalCode = NormalizedCode(req), IsActive = req.IsActive, GroupId = req.GroupId };
             db.People.Add(person);
             await db.SaveChangesAsync();
             return Results.Ok(person);
@@ -164,6 +169,7 @@ public static class AdminEndpoints
             person.Name = req.Name.Trim();
             person.NationalCode = NormalizedCode(req);
             person.IsActive = req.IsActive;
+            person.GroupId = req.GroupId;
             await db.SaveChangesAsync();
             return Results.Ok(person);
         });
@@ -186,6 +192,8 @@ public static class AdminEndpoints
         var name = (req.Name ?? "").Trim();
         if (name.Length == 0) return "نام شخص را وارد کنید.";
         if (await db.People.AnyAsync(p => p.Name == name && p.Id != id)) return "شخصی با این نام وجود دارد.";
+        if (req.GroupId is { } groupId && !await db.PersonGroups.AnyAsync(x => x.Id == groupId))
+            return "گروه انتخاب‌شده وجود ندارد.";
         var code = NormalizedCode(req);
         if (code != null)
         {
@@ -213,8 +221,12 @@ public static class AdminEndpoints
             if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
 
             var itemIds = lines.Select(l => l.ItemId).Distinct().ToList();
-            var items = await db.Items.Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
+            var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
             if (items.Count != itemIds.Count) return ApiErrors.Bad("یکی از اقلام انتخاب‌شده معتبر یا فعال نیست.");
+            // The staff group still applies here; opening hours don't, since the manager may record a paper list later.
+            var notForPerson = items.Values.FirstOrDefault(i => i.Category != null && !i.Category.IsFor(person.GroupId));
+            if (notForPerson != null)
+                return ApiErrors.Bad($"«{notForPerson.Name}» از دسته‌ی «{notForPerson.Category!.Name}» است که برای گروه این شخص نیست.");
 
             var now = DateTime.UtcNow;
             var at = now;

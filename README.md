@@ -83,6 +83,9 @@ which is checked against its check digit. It runs entirely on your own server in
 - **Excel / CSV import** of items and people with column mapping and a preview. Nothing is duplicated
   (Arabic ي/ك and Persian ی/ک are treated as the same letter) and existing prices are updated. Invalid or
   duplicate national IDs are listed for fixing, and leading zeros dropped by Excel are restored.
+- **Menu categories with hours and staff groups:** define your own menu sections (breakfast, drinks, …), give a
+  section opening hours (colleagues can only request from it in that window; the server enforces it) and/or
+  limit it to one staff group. Staff groups are defined on the people page; each person is in one group or none.
 - **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
   appear under each colleague's balance, and tapping a number copies it.
 - Multiple manager accounts, password change, and light and dark themes.

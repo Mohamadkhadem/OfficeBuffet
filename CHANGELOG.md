@@ -4,6 +4,21 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.2.0] - 2026-11-09
+
+### Added
+- Menu categories are now managed by the pantry manager (the four former defaults and any category already in
+  use are carried over). A category can have opening hours: colleagues can only request from it in that window,
+  which the server enforces. Categories are ordered with up/down buttons.
+- Staff groups: define groups on the people page and put each person in one (or none). A menu category can be
+  limited to one group; without a group it is for everyone. The manager's order screen only offers the
+  categories of the selected person's group (opening hours are shown there but not enforced, for paper lists).
+- Excel import: an unknown category creates it; the people import has an optional staff group column.
+
+### Changed
+- Request lines show a large count badge per item (instead of "2 × coffee"), and the note is highlighted.
+- Notification texts say "۲ عدد قهوه", which reads correctly in right-to-left notifications.
+
 ## [1.1.0] - 2026-10-31
 
 ### Added
@@ -44,5 +59,6 @@ First public release.
 - Self-contained Windows build; Windows service scripts and IIS `web.config` included.
 - `tools/new-certificate.ps1` to create a private CA and HTTPS certificate for the office network.
 
+[1.2.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.0.0

@@ -192,7 +192,7 @@ function entryHtml(e, { showPerson = true, canVoid = false } = {}) {
   const isOrder = e.kind === 'order';
   if (e.kind === 'settlement') return settlementHtml(e, { showPerson, canVoid });
   const settledBadge = e.settled && !voided ? ' <span class="badge off">تسویه‌شده</span>' : '';
-  const title = (isOrder ? `${esc(e.itemName)}${e.quantity > 1 ? ` × ${fa(e.quantity)}` : ''}` : 'پرداخت') + settledBadge;
+  const title = (isOrder ? `<span class="qty-badge">${fa(e.quantity)}</span>${esc(e.itemName)}` : 'پرداخت') + settledBadge;
   const sub = [
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     fmtDT(e.createdAt),
@@ -376,7 +376,7 @@ async function viewLogin(mode) {
 
 // ---------- views: admin ----------
 async function viewOrder(_, alive) {
-  const [items, people] = await Promise.all([api('/api/admin/items'), api('/api/admin/people')]);
+  const [items, people, allCategories] = await Promise.all([api('/api/admin/items'), api('/api/admin/people'), api('/api/admin/categories')]);
   if (!alive()) return;
   const activeItems = items.filter((i) => i.isActive);
   const activePeople = people.filter((p) => p.isActive).sort(byName);
@@ -393,7 +393,13 @@ async function viewOrder(_, alive) {
     return;
   }
 
-  const categories = [...new Set(activeItems.map((i) => i.category || 'سایر'))];
+  // Menu sections the selected person may order from: categories for everyone or for their staff group,
+  // then items without a category. Opening hours are shown but not enforced here (paper lists, late entry).
+  const sectionsFor = (p) => [
+    ...allCategories.filter((c) => !c.personGroupId || c.personGroupId === p.groupId)
+      .map((c) => ({ c, list: activeItems.filter((i) => i.categoryId === c.id) })),
+    { c: { name: 'سایر' }, list: activeItems.filter((i) => i.categoryId == null) },
+  ].filter((s) => s.list.length);
   view.innerHTML = `
     <div class="order-layout" id="layout">
       <section class="people-pane">
@@ -464,10 +470,10 @@ async function viewOrder(_, alive) {
             <small class="${isToday() ? '' : 'past-day'}">${isToday() ? 'امروز' : 'تاریخ'} ${faDigits(day.label)}</small></div>
           <button type="button" class="btn ghost small back-btn" id="change">تغییر شخص</button>
         </div>
-        ${categories.map((c) => `
-          <div class="cat-title">${esc(c)}</div>
+        ${sectionsFor(person).map(({ c, list }) => `
+          <div class="cat-title">${esc(c.name)} ${c.id ? categoryRulesHtml(c) : ''}</div>
           <div class="items-grid">
-            ${activeItems.filter((i) => (i.category || 'سایر') === c).map((i) => `
+            ${list.map((i) => `
               <div class="item-tile" data-item="${i.id}">
                 <div class="name">${esc(i.name)}</div>
                 <div class="price">${priceHtml(i.price)}</div>
@@ -730,25 +736,24 @@ async function viewPayments(preselectId, alive) {
   renderPerson();
 }
 
-const DEFAULT_CATEGORIES = ['صبحانه', 'نوشیدنی گرم', 'نوشیدنی سرد', 'تنقلات'];
-
 // ---------- Excel import (items and people) ----------
 const IMPORT_KINDS = {
   items: {
     title: 'ورود کالاها از اکسل',
-    help: 'کالایی که همین عنوان را دارد تکراری ثبت نمی‌شود؛ مبلغ (و دسته، اگر ستونش را انتخاب کنید) به‌روز می‌شود. مبلغ ۰ یا خالی یعنی رایگان.',
+    help: 'کالایی که همین عنوان را دارد تکراری ثبت نمی‌شود؛ مبلغ (و دسته، اگر ستونش را انتخاب کنید) به‌روز می‌شود. مبلغ ۰ یا خالی یعنی رایگان. دسته‌ای که هنوز وجود ندارد ساخته می‌شود.',
     fields: [
-      { key: 'name', label: 'ستون عنوان کالا', required: true, guess: /عنوان|نام|کالا|شرح|name|item/i },
+      { key: 'name', label: 'ستون عنوان کالا', required: true, guess: /^(?!.*(دسته|گروه)).*(عنوان|نام|کالا|شرح|name|item)/i },
       { key: 'price', label: 'ستون مبلغ (تومان)', required: true, guess: /مبلغ|قیمت|بها|price/i },
       { key: 'category', label: 'ستون دسته (اختیاری)', guess: /دسته|گروه|category/i },
     ],
   },
   people: {
     title: 'ورود افراد از اکسل',
-    help: 'شخصی که همین نام را دارد تکراری ثبت نمی‌شود؛ اگر کد ملی‌اش خالی بود اضافه می‌شود. کد ملی نامعتبر یا تکراری در لیست مشکل‌دار نشان داده می‌شود و ثبت نمی‌شود.',
+    help: 'شخصی که همین نام را دارد تکراری ثبت نمی‌شود؛ اگر کد ملی‌اش خالی بود اضافه می‌شود. کد ملی نامعتبر یا تکراری در لیست مشکل‌دار نشان داده می‌شود و ثبت نمی‌شود. گروهی که هنوز وجود ندارد ساخته می‌شود.',
     fields: [
-      { key: 'name', label: 'ستون نام و نام خانوادگی', required: true, guess: /^(?!.*کد).*(نام|عنوان|name)/i },
+      { key: 'name', label: 'ستون نام و نام خانوادگی', required: true, guess: /^(?!.*(کد|گروه|شیفت)).*(نام|عنوان|name)/i },
       { key: 'nationalCode', label: 'ستون کد ملی', required: true, guess: /کد|ملی|national|code/i },
+      { key: 'group', label: 'ستون گروه پرسنلی (اختیاری)', guess: /گروه|شیفت|واحد|group/i },
     ],
   },
 };
@@ -900,23 +905,31 @@ function openImport(kind, container) {
 }
 
 async function viewItems(_, alive) {
-  const items = await api('/api/admin/items');
+  const [items, categories, groups] = await Promise.all([api('/api/admin/items'), api('/api/admin/categories'), api('/api/admin/groups')]);
   if (!alive()) return;
-  const categories = [...new Set([...DEFAULT_CATEGORIES, ...items.map((i) => i.category).filter(Boolean)])];
-  const groups = [...new Set(items.map((i) => i.category || 'سایر'))];
+  // Items grouped in menu order; items without a category come last under "سایر".
+  const sections = [
+    ...categories.map((c) => ({ c, list: items.filter((i) => i.categoryId === c.id) })),
+    { c: { id: null, name: 'بدون دسته (سایر)' }, list: items.filter((i) => i.categoryId == null) },
+  ].filter((s) => s.list.length);
 
   view.innerHTML = `
     <div class="page-title"><h1>کالاها</h1><button type="button" class="btn ghost small" data-open-import="items">📥 ورود از اکسل</button></div>
     <div class="card" id="import" hidden></div>
+    <div class="card" id="cats"></div>
     <div class="card">
       <div class="card-head"><h2 id="form-title">کالای جدید</h2></div>
       <form class="form" id="f">
         <div class="form-grid">
           <label>نام<input name="name" required maxlength="80" placeholder="مثلاً نیمرو" autocomplete="off"></label>
-          <label>دسته<input name="category" list="cats" placeholder="مثلاً صبحانه" autocomplete="off"></label>
+          <label>دسته
+            <select name="categoryId">
+              <option value="">بدون دسته (سایر)</option>
+              ${categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+            </select>
+          </label>
           <label>قیمت (تومان)<input name="price" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
         </div>
-        <datalist id="cats">${categories.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
         <label class="check" id="active-wrap" hidden><input type="checkbox" name="isActive" checked> فعال (در صفحه‌ی ثبت سفارش نمایش داده شود)</label>
         <div class="row-end">
           <button type="button" class="btn ghost" id="cancel" hidden>انصراف</button>
@@ -925,10 +938,10 @@ async function viewItems(_, alive) {
       </form>
     </div>
     <div class="card">
-      ${items.length ? groups.map((g) => `
-        <div class="cat-title">${esc(g)}</div>
+      ${sections.length ? sections.map(({ c, list }) => `
+        <div class="cat-title">${esc(c.name)} ${c.id ? categoryRulesHtml(c) : ''}</div>
         <div class="list">
-          ${items.filter((i) => (i.category || 'سایر') === g).map((i) => `
+          ${list.map((i) => `
             <div class="list-row">
               <div class="grow"><div class="title">${esc(i.name)} ${i.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div></div>
               <div class="amount">${priceHtml(i.price)}</div>
@@ -949,7 +962,7 @@ async function viewItems(_, alive) {
     form.reset();
     if (item) {
       fields.name.value = item.name;
-      fields.category.value = item.category;
+      fields.categoryId.value = item.categoryId ?? '';
       fields.price.value = item.price;
       fields.isActive.checked = item.isActive;
     }
@@ -976,17 +989,172 @@ async function viewItems(_, alive) {
   onSubmit(form, async (fd) => {
     const price = parseAmount(fd.get('price'));
     if (Number.isNaN(price)) throw new Error('قیمت معتبر وارد کنید.');
-    const body = { name: fd.get('name'), category: fd.get('category'), price, isActive: editingId ? fd.get('isActive') === 'on' : true };
+    const categoryId = fd.get('categoryId') ? Number(fd.get('categoryId')) : null;
+    const body = { name: fd.get('name'), categoryId, price, isActive: editingId ? fd.get('isActive') === 'on' : true };
     await api(editingId ? `/api/admin/items/${editingId}` : '/api/admin/items', { method: editingId ? 'PUT' : 'POST', body });
     toast(editingId ? 'ذخیره شد.' : 'کالا اضافه شد.');
+    route();
+  });
+  renderCategoriesAdmin($('#cats'), categories, groups);
+}
+
+// ---------- menu categories and staff groups ----------
+/** "۰۷:۰۰" from "07:00". */
+const hhmm = (t) => faDigits(t ?? '');
+/** Small badges for a category's rules: opening hours and staff group. */
+const categoryRulesHtml = (c) => `
+  ${c.startTime ? `<span class="badge ${c.open === false ? 'debt' : 'wait'}" title="${c.open === false ? 'الان بسته است' : 'الان باز است'}">⏰ ${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
+  ${c.personGroup ? `<span class="badge warn">👥 فقط ${esc(c.personGroup)}</span>` : ''}`;
+
+/** "Menu categories" card on the items page: name, opening hours, staff group, order. */
+function renderCategoriesAdmin(card, categories, groups) {
+  let editingId = null;
+  card.innerHTML = `
+    <div class="card-head"><h2>دسته‌بندی منو</h2></div>
+    <p class="muted" style="margin-top:0">
+      دسته‌ی بدون زمان‌بندی همیشه باز است؛ با زمان‌بندی، همکاران فقط در همان بازه از آن درخواست می‌دهند.
+      دسته‌ای که به یک گروه پرسنلی داده شود فقط برای همان گروه نمایش داده می‌شود؛ بدون گروه، برای همه است.
+    </p>
+    <div class="list">
+      ${categories.length ? categories.map((c, i) => `
+        <div class="list-row">
+          <div class="grow">
+            <div class="title">${esc(c.name)} ${categoryRulesHtml(c)}</div>
+            <div class="sub">${c.startTime ? '' : 'همه‌ی ساعات · '}${c.personGroup ? '' : 'برای همه · '}${fa(c.itemCount)} کالا</div>
+          </div>
+          <div class="actions">
+            <button class="btn link small" data-cat-move="${c.id}:-1" ${i === 0 ? 'disabled' : ''} title="بالاتر">▲</button>
+            <button class="btn link small" data-cat-move="${c.id}:1" ${i === categories.length - 1 ? 'disabled' : ''} title="پایین‌تر">▼</button>
+            <button class="btn link small" data-cat-edit="${c.id}">ویرایش</button>
+            <button class="btn link danger small" data-cat-del="${c.id}">حذف</button>
+          </div>
+        </div>`).join('') : '<div class="empty">هنوز دسته‌ای تعریف نشده است.</div>'}
+    </div>
+    <form class="form" id="cat-form" style="margin-top:12px">
+      <div class="form-grid">
+        <label>نام دسته<input name="name" required maxlength="40" placeholder="مثلاً صبحانه" autocomplete="off"></label>
+        <label>از ساعت (اختیاری)<input name="startTime" type="time"></label>
+        <label>تا ساعت (اختیاری)<input name="endTime" type="time"></label>
+      </div>
+      <label>گروه پرسنلی
+        <select name="personGroupId">
+          <option value="">همه‌ی پرسنل</option>
+          ${groups.map((g) => `<option value="${g.id}">فقط ${esc(g.name)}</option>`).join('')}
+        </select>
+        ${groups.length ? '' : '<span class="hint">گروه‌ها در صفحه‌ی «افراد» تعریف می‌شوند.</span>'}
+      </label>
+      <div class="row-end">
+        <button type="button" class="btn ghost" id="cat-cancel" hidden>انصراف</button>
+        <button class="btn" id="cat-save">افزودن دسته</button>
+      </div>
+    </form>`;
+
+  const form = $('#cat-form', card);
+  const setEditing = (c) => {
+    editingId = c?.id ?? null;
+    form.reset();
+    if (c) {
+      form.elements.name.value = c.name;
+      form.elements.startTime.value = c.startTime ?? '';
+      form.elements.endTime.value = c.endTime ?? '';
+      form.elements.personGroupId.value = c.personGroupId ?? '';
+      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      form.elements.name.focus();
+    }
+    $('#cat-save', card).textContent = c ? 'ذخیره' : 'افزودن دسته';
+    $('#cat-cancel', card).hidden = !c;
+  };
+  $('#cat-cancel', card).onclick = () => setEditing(null);
+  card.onclick = async (e) => {
+    const edit = e.target.closest('[data-cat-edit]');
+    if (edit) return setEditing(categories.find((c) => c.id == edit.dataset.catEdit));
+    const move = e.target.closest('[data-cat-move]');
+    const del = e.target.closest('[data-cat-del]');
+    try {
+      if (move) {
+        const [id, direction] = move.dataset.catMove.split(':').map(Number);
+        await api(`/api/admin/categories/${id}/move`, { method: 'POST', body: { direction } });
+        route();
+      } else if (del) {
+        const c = categories.find((x) => x.id == del.dataset.catDel);
+        if (!confirm(`دسته‌ی «${c.name}» حذف شود؟`)) return;
+        await api(`/api/admin/categories/${c.id}`, { method: 'DELETE' });
+        toast('دسته حذف شد.');
+        route();
+      }
+    } catch (err) { toast(err.message, true); }
+  };
+  onSubmit(form, async (fd) => {
+    const body = {
+      name: fd.get('name'),
+      startTime: fd.get('startTime') || null,
+      endTime: fd.get('endTime') || null,
+      personGroupId: fd.get('personGroupId') ? Number(fd.get('personGroupId')) : null,
+    };
+    await api(editingId ? `/api/admin/categories/${editingId}` : '/api/admin/categories', { method: editingId ? 'PUT' : 'POST', body });
+    toast(editingId ? 'دسته ذخیره شد.' : 'دسته اضافه شد.');
+    route();
+  });
+}
+
+/** "Staff groups" card on the people page. */
+function renderGroupsAdmin(card, groups) {
+  let editingId = null;
+  card.innerHTML = `
+    <div class="card-head"><h2>گروه‌های پرسنلی</h2></div>
+    <p class="muted" style="margin-top:0">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.</p>
+    <div class="list">
+      ${groups.length ? groups.map((g) => `
+        <div class="list-row">
+          <div class="grow">
+            <div class="title">👥 ${esc(g.name)}</div>
+            <div class="sub">${fa(g.memberCount)} نفر${g.categoryCount ? ` · ${fa(g.categoryCount)} دسته‌ی منو` : ''}</div>
+          </div>
+          <div class="actions">
+            <button class="btn link small" data-group-edit="${g.id}">ویرایش</button>
+            <button class="btn link danger small" data-group-del="${g.id}">حذف</button>
+          </div>
+        </div>`).join('') : '<div class="empty">هنوز گروهی تعریف نشده است.</div>'}
+    </div>
+    <form class="form" id="group-form" style="margin-top:12px">
+      <div class="inline-form">
+        <input name="name" required maxlength="40" placeholder="نام گروه، مثلاً شیفت شب" autocomplete="off">
+        <button type="button" class="btn ghost" id="group-cancel" hidden>انصراف</button>
+        <button class="btn" id="group-save">افزودن گروه</button>
+      </div>
+    </form>`;
+
+  const form = $('#group-form', card);
+  const setEditing = (g) => {
+    editingId = g?.id ?? null;
+    form.reset();
+    if (g) { form.elements.name.value = g.name; form.elements.name.focus(); }
+    $('#group-save', card).textContent = g ? 'ذخیره' : 'افزودن گروه';
+    $('#group-cancel', card).hidden = !g;
+  };
+  $('#group-cancel', card).onclick = () => setEditing(null);
+  card.onclick = async (e) => {
+    const edit = e.target.closest('[data-group-edit]');
+    if (edit) return setEditing(groups.find((g) => g.id == edit.dataset.groupEdit));
+    const del = e.target.closest('[data-group-del]');
+    if (!del) return;
+    const g = groups.find((x) => x.id == del.dataset.groupDel);
+    if (!confirm(`گروه «${g.name}» حذف شود؟${g.memberCount ? ` ${fa(g.memberCount)} نفرِ آن بدون گروه می‌شوند.` : ''}`)) return;
+    try { await api(`/api/admin/groups/${g.id}`, { method: 'DELETE' }); toast('گروه حذف شد.'); route(); }
+    catch (err) { toast(err.message, true); }
+  };
+  onSubmit(form, async (fd) => {
+    await api(editingId ? `/api/admin/groups/${editingId}` : '/api/admin/groups', { method: editingId ? 'PUT' : 'POST', body: { name: fd.get('name') } });
+    toast(editingId ? 'گروه ذخیره شد.' : 'گروه اضافه شد.');
     route();
   });
 }
 
 async function viewPeople(_, alive) {
-  const [people, summary] = await Promise.all([api('/api/admin/people'), api('/api/report/summary')]);
+  const [people, summary, groups] = await Promise.all([api('/api/admin/people'), api('/api/report/summary'), api('/api/admin/groups')]);
   if (!alive()) return;
   const balance = new Map(summary.people.map((p) => [p.id, p.balance]));
+  const groupName = new Map(groups.map((g) => [g.id, g.name]));
   people.sort((a, b) => b.isActive - a.isActive || byName(a, b));
   const missing = people.filter((p) => p.isActive && !p.nationalCode).length;
 
@@ -996,9 +1164,15 @@ async function viewPeople(_, alive) {
     <div class="card">
       <div class="card-head"><h2 id="form-title">شخص جدید</h2></div>
       <form class="form" id="f">
-        <div class="form-grid two">
+        <div class="form-grid">
           <label>نام و نام خانوادگی<input name="name" required maxlength="80" placeholder="مثلاً علی رضایی" autocomplete="off"></label>
           <label>کد ملی<input name="nationalCode" inputmode="numeric" maxlength="12" placeholder="۱۰ رقم — برای ورود خودش" autocomplete="off" class="code-input"></label>
+          <label>گروه پرسنلی
+            <select name="groupId">
+              <option value="">بدون گروه</option>
+              ${groups.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('')}
+            </select>
+          </label>
         </div>
         <label class="check" id="active-wrap" hidden><input type="checkbox" name="isActive" checked> فعال (در ثبت سفارش نمایش داده شود و بتواند وارد شود)</label>
         <div class="row-end">
@@ -1012,9 +1186,9 @@ async function viewPeople(_, alive) {
       <input class="search" id="q" placeholder="جستجوی نام یا کد ملی…" autocomplete="off">
       <div class="list" id="list">
         ${people.length ? people.map((p) => `
-          <div class="list-row" data-name="${esc(p.name)} ${esc(p.nationalCode ?? '')} ${faDigits(p.nationalCode ?? '')}">
+          <div class="list-row" data-name="${esc(p.name)} ${esc(p.nationalCode ?? '')} ${faDigits(p.nationalCode ?? '')} ${esc(groupName.get(p.groupId) ?? '')}">
             <div class="grow">
-              <div class="title">${esc(p.name)} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
+              <div class="title">${esc(p.name)} ${p.groupId ? `<span class="badge warn">👥 ${esc(groupName.get(p.groupId))}</span>` : ''} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
               <div class="sub">${p.nationalCode ? `کد ملی ${faDigits(p.nationalCode)}` : '<span class="void-note">بدون کد ملی</span>'}</div>
             </div>
             ${balanceBadge(balance.get(p.id) ?? 0)}
@@ -1024,8 +1198,10 @@ async function viewPeople(_, alive) {
             </div>
           </div>`).join('') : '<div class="empty">هنوز شخصی تعریف نشده است.</div>'}
       </div>
-    </div>`;
+    </div>
+    <div class="card" id="groups"></div>`;
 
+  renderGroupsAdmin($('#groups'), groups);
   bindSearch($('#q'), $('#list'));
   const form = $('#f');
   const fields = form.elements;
@@ -1036,6 +1212,7 @@ async function viewPeople(_, alive) {
     if (p) {
       fields.name.value = p.name;
       fields.nationalCode.value = p.nationalCode ? faDigits(p.nationalCode) : '';
+      fields.groupId.value = p.groupId ?? '';
       fields.isActive.checked = p.isActive;
       form.scrollIntoView({ behavior: 'smooth', block: 'center' });
       fields.name.focus();
@@ -1061,6 +1238,7 @@ async function viewPeople(_, alive) {
     const body = {
       name: fd.get('name'),
       nationalCode: toLatinDigits(fd.get('nationalCode')),
+      groupId: fd.get('groupId') ? Number(fd.get('groupId')) : null,
       isActive: editingId ? fd.get('isActive') === 'on' : true,
     };
     await api(editingId ? `/api/admin/people/${editingId}` : '/api/admin/people', { method: editingId ? 'PUT' : 'POST', body });
@@ -1236,25 +1414,46 @@ async function renderCardsAdmin(card, alive) {
 const REQUEST_STATUS = {
   pending: ['در انتظار', 'wait'], done: ['ثبت شد', 'credit'], rejected: ['رد شد', 'debt'], cancelled: ['لغو شد', 'off'],
 };
-const linesText = (lines) => lines.map((l) => (l.quantity === 1 ? l.itemName : `${fa(l.quantity)} × ${l.itemName}`)).join('، ');
+// "۲ عدد قهوه": plain text (messages, toasts), where "۲ × قهوه" got reordered in right-to-left text.
+const linesText = (lines) => lines.map((l) => `${fa(l.quantity)} عدد ${l.itemName}`).join('، ');
+/** Request lines as chips with a large count badge, so "how many of what" is clear at a glance. */
+const linesHtml = (lines, big = false) => `<div class="lines${big ? ' big' : ''}">${lines.map((l) => `
+  <span class="line"><b class="q">${fa(l.quantity)}</b><span class="n">${esc(l.itemName)}</span></span>`).join('')}</div>`;
 const statusBadge = (s) => `<span class="badge ${REQUEST_STATUS[s][1]}">${REQUEST_STATUS[s][0]}</span>`;
 
 /** Employee page: the price list doubles as a request form ("I'd like a coffee"). */
 async function viewPrices(_, alive) {
-  const items = await api('/api/report/prices');
+  const { now: serverNow, menu } = await api('/api/report/prices');
   if (!alive()) return;
-  const groups = [...new Set(items.map((i) => i.category || 'سایر'))];
+  const items = menu.flatMap((s) => s.items);
   const cart = new Map();
+
+  // Opening hours are in office (server) time; measure this device's clock against it once, so sections
+  // open and close on time while the page stays open.
+  const minutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const deviceMinutes = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+  const skew = ((minutes(serverNow) - deviceMinutes() + 720 + 1440) % 1440) - 720;
+  const isOpen = (c) => {
+    if (!c.startTime) return true;
+    const t = (deviceMinutes() + skew + 1440) % 1440;
+    const [s, e] = [minutes(c.startTime), minutes(c.endTime)];
+    return s <= e ? t >= s && t < e : t >= s || t < e;
+  };
+
   view.innerHTML = `
     <div class="page-title"><h1>لیست قیمت و درخواست</h1></div>
     <div class="card" id="push" hidden></div>
     <div class="card">
       ${items.length ? `
         <p class="muted" style="margin-top:0">تعداد را انتخاب کنید و «ارسال درخواست» را بزنید تا مسئول بوفه باخبر شود.</p>
-        ${groups.map((g) => `
-          <div class="cat-title">${esc(g)}</div>
+        ${menu.map(({ category: c, items: list }, n) => `
+          <section class="menu-section" data-section="${n}">
+          <div class="cat-title">${esc(c.name)}
+            ${c.startTime ? `<span class="badge wait">⏰ ${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
+            <span class="closed-note">الان بسته است؛ سفارش از ساعت ${hhmm(c.startTime)}</span>
+          </div>
           <div class="items-grid">
-            ${items.filter((i) => (i.category || 'سایر') === g).map((i) => `
+            ${list.map((i) => `
               <div class="item-tile" data-item="${i.id}">
                 <div class="name">${esc(i.name)}</div>
                 <div class="price">${priceHtml(i.price)}</div>
@@ -1264,7 +1463,8 @@ async function viewPrices(_, alive) {
                   <button type="button" data-step="1" aria-label="اضافه کردن">+</button>
                 </div>
               </div>`).join('')}
-          </div>`).join('')}
+          </div>
+          </section>`).join('')}
         <label style="margin-top:14px">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً کم‌شیرین، اتاق ۲۰۳"></label>
         <div class="order-bar">
           <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
@@ -1297,6 +1497,22 @@ async function viewPrices(_, alive) {
     updateBar();
   };
 
+  // Grey out sections outside their hours; anything already picked from a section that just closed is removed.
+  const refreshOpenSections = () => {
+    menu.forEach(({ category: c, items: list }, n) => {
+      const open = isOpen(c);
+      view.querySelector(`[data-section="${n}"]`)?.classList.toggle('closed', !open);
+      if (open) return;
+      const dropped = list.filter((i) => cart.get(i.id) > 0);
+      dropped.forEach((i) => setQty(i.id, 0));
+      if (dropped.length) toast(`دسته‌ی «${c.name}» بسته شد و از سبد برداشته شد.`, true);
+    });
+  };
+  if (items.length) {
+    refreshOpenSections();
+    const hours = setInterval(() => (alive() ? refreshOpenSections() : clearInterval(hours)), 30000);
+  }
+
   // Statuses from the previous refresh, so an answer that arrives while the page is open is announced.
   let seen = null;
   const renderMine = async () => {
@@ -1315,7 +1531,7 @@ async function viewPrices(_, alive) {
     $('#mine').innerHTML = mine.length ? mine.map((r) => `
       <div class="list-row">
         <div class="grow">
-          <div class="title">${esc(linesText(r.lines))}</div>
+          ${linesHtml(r.lines)}
           <div class="sub">${fmtDT(r.createdAt)}${r.note ? ' · ' + esc(r.note) : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}${r.status === 'pending' && r.remindCount ? ` · ${fa(r.remindCount)} بار تلنگر زدی` : ''}</div>
         </div>
         ${statusBadge(r.status)}
@@ -1347,6 +1563,11 @@ async function viewPrices(_, alive) {
     if (tile) {
       const id = Number(tile.dataset.item);
       const step = e.target.closest('[data-step]');
+      const section = tile.closest('.menu-section');
+      if (section?.classList.contains('closed')) {
+        const { category: c } = menu[Number(section.dataset.section)];
+        return toast(`سفارش از «${c.name}» فقط از ${hhmm(c.startTime)} تا ${hhmm(c.endTime)} ممکن است.`, true);
+      }
       return setQty(id, (cart.get(id) || 0) + (step ? Number(step.dataset.step) : 1));
     }
     const remind = e.target.closest('[data-remind]');
@@ -1416,8 +1637,9 @@ async function viewRequests(tab, alive) {
           <div class="list-row request-row">
             <div class="grow">
               <div class="title">${esc(r.personName)}</div>
-              <div>${esc(linesText(r.lines))}</div>
-              <div class="sub">${fmtDT(r.createdAt)}${r.note ? ' · ' + esc(r.note) : ''}</div>
+              ${linesHtml(r.lines, true)}
+              ${r.note ? `<div class="req-note">📝 ${esc(r.note)}</div>` : ''}
+              <div class="sub">${fmtDT(r.createdAt)}</div>
               ${r.remindCount ? `<div class="sub"><span class="badge warn">👋 ${fa(r.remindCount)} بار تلنگر زده · آخرین ${fmtDT(r.remindedAt)}</span></div>` : ''}
             </div>
             <div class="amount">${money(estimate(r))}</div>
@@ -1435,7 +1657,8 @@ async function viewRequests(tab, alive) {
             <div class="list-row">
               <div class="grow">
                 <div class="title">${esc(r.personName)}</div>
-                <div class="sub">${esc(linesText(r.lines))} · ${fmtDT(r.handledAt || r.createdAt)}${r.handledBy ? ` · ${esc(r.handledBy)}` : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}</div>
+                ${linesHtml(r.lines)}
+                <div class="sub">${fmtDT(r.handledAt || r.createdAt)}${r.handledBy ? ` · ${esc(r.handledBy)}` : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}</div>
               </div>
               ${statusBadge(r.status)}
             </div>`).join('') : '<div class="empty">هنوز درخواستی رسیدگی نشده است.</div>'}

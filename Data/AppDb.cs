@@ -14,6 +14,8 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<PantryRequest> Requests => Set<PantryRequest>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
     public DbSet<PaymentCard> PaymentCards => Set<PaymentCard>();
+    public DbSet<MenuCategory> MenuCategories => Set<MenuCategory>();
+    public DbSet<PersonGroup> PersonGroups => Set<PersonGroup>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -30,6 +32,12 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         b.Entity<Person>().Property(x => x.NationalCode).HasMaxLength(10);
         b.Entity<Item>().HasIndex(x => x.Name).IsUnique();
         b.Entity<PaymentCard>().HasIndex(x => x.Number).IsUnique();
+        b.Entity<PersonGroup>().HasIndex(x => x.Name).IsUnique();
+        b.Entity<MenuCategory>().HasIndex(x => x.Name).IsUnique();
+        // Deleting a group or category that is still in use is refused by the API, so Restrict is only a safety net.
+        b.Entity<MenuCategory>().HasOne(x => x.PersonGroup).WithMany().OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Item>().HasOne(x => x.Category).WithMany().OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Person>().HasOne(x => x.Group).WithMany().OnDelete(DeleteBehavior.Restrict);
         b.Entity<Order>().HasIndex(x => x.CreatedAt);
         b.Entity<Order>().HasIndex(x => x.PersonId);
         b.Entity<Payment>().HasIndex(x => x.CreatedAt);

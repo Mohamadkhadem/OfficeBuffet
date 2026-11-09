@@ -48,9 +48,8 @@ namespace OfficeBuffet.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -67,10 +66,47 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CategoryId");
+
                     b.HasIndex("Name")
                         .IsUnique();
 
                     b.ToTable("Items");
+                });
+
+            modelBuilder.Entity("OfficeBuffet.Data.MenuCategory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<TimeOnly?>("EndTime")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PersonGroupId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<TimeOnly?>("StartTime")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.HasIndex("PersonGroupId");
+
+                    b.ToTable("MenuCategories");
                 });
 
             modelBuilder.Entity("OfficeBuffet.Data.Order", b =>
@@ -272,6 +308,9 @@ namespace OfficeBuffet.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("GroupId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("INTEGER");
 
@@ -285,6 +324,8 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("GroupId");
+
                     b.HasIndex("Name")
                         .IsUnique();
 
@@ -292,6 +333,27 @@ namespace OfficeBuffet.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("People");
+                });
+
+            modelBuilder.Entity("OfficeBuffet.Data.PersonGroup", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("PersonGroups");
                 });
 
             modelBuilder.Entity("OfficeBuffet.Data.PushSubscription", b =>
@@ -378,6 +440,26 @@ namespace OfficeBuffet.Data.Migrations
                     b.ToTable("Settlements");
                 });
 
+            modelBuilder.Entity("OfficeBuffet.Data.Item", b =>
+                {
+                    b.HasOne("OfficeBuffet.Data.MenuCategory", "Category")
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Category");
+                });
+
+            modelBuilder.Entity("OfficeBuffet.Data.MenuCategory", b =>
+                {
+                    b.HasOne("OfficeBuffet.Data.PersonGroup", "PersonGroup")
+                        .WithMany()
+                        .HasForeignKey("PersonGroupId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("PersonGroup");
+                });
+
             modelBuilder.Entity("OfficeBuffet.Data.Order", b =>
                 {
                     b.HasOne("OfficeBuffet.Data.Person", "Person")
@@ -418,6 +500,16 @@ namespace OfficeBuffet.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Person");
+                });
+
+            modelBuilder.Entity("OfficeBuffet.Data.Person", b =>
+                {
+                    b.HasOne("OfficeBuffet.Data.PersonGroup", "Group")
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Group");
                 });
 
             modelBuilder.Entity("OfficeBuffet.Data.PushSubscription", b =>

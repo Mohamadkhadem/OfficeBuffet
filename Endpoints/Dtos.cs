@@ -4,8 +4,12 @@ public record LoginRequest(string Username, string Password);
 public record EmployeeLoginRequest(string NationalCode);
 public record ChangePasswordRequest(string Current, string New);
 public record UserRequest(string Username, string Password);
-public record ItemRequest(string Name, string? Category, long Price, bool IsActive = true);
-public record PersonRequest(string Name, string? NationalCode, bool IsActive = true);
+public record ItemRequest(string Name, int? CategoryId, long Price, bool IsActive = true);
+public record PersonRequest(string Name, string? NationalCode, bool IsActive = true, int? GroupId = null);
+/// <param name="StartTime">"07:00"; leave both times empty for a category that is always open.</param>
+public record MenuCategoryRequest(string? Name, string? StartTime, string? EndTime, int? PersonGroupId);
+public record PersonGroupRequest(string? Name);
+public record MoveRequest(int Direction);
 public record OrderLine(int ItemId, int Quantity);
 public record OrderRequest(int PersonId, List<OrderLine> Lines, string? Note, string? Date = null);
 public record PaymentRequest(int PersonId, long Amount, string? Note);
@@ -19,7 +23,7 @@ public record PushSubscribeRequest(string Endpoint, PushKeys Keys);
 public record PushUnsubscribeRequest(string Endpoint);
 public record ImportItemRow(int Row, string? Name, string? Price, string? Category);
 public record ImportItemsRequest(List<ImportItemRow> Rows, bool Apply);
-public record ImportPersonRow(int Row, string? Name, string? NationalCode);
+public record ImportPersonRow(int Row, string? Name, string? NationalCode, string? Group = null);
 public record ImportPeopleRequest(List<ImportPersonRow> Rows, bool Apply);
 
 public static class ApiErrors

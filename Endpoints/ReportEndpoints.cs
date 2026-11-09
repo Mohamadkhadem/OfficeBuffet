@@ -107,9 +107,32 @@ public static class ReportEndpoints
         });
 
         // Price list of what can be ordered right now; open to employees too.
-        g.MapGet("/prices", async (AppDb db) =>
-            await db.Items.Where(i => i.IsActive).OrderBy(i => i.Category).ThenBy(i => i.Name)
-                .Select(i => new { i.Id, i.Name, i.Category, i.Price }).ToListAsync());
+        // The menu as the signed-in person may order from it: categories of their staff group (or for everyone),
+        // each with its opening hours and whether it is open right now (server time). Items without a category
+        // come last under "سایر", which is always open.
+        g.MapGet("/prices", async (HttpContext ctx, AppDb db) =>
+        {
+            int? groupId = null;
+            var personId = AuthEndpoints.EmployeePersonId(ctx.User);
+            if (personId != null) groupId = await db.People.Where(p => p.Id == personId).Select(p => p.GroupId).FirstOrDefaultAsync();
+            var isEmployee = personId != null;
+
+            var categories = await db.MenuCategories.Include(c => c.PersonGroup).OrderBy(c => c.SortOrder).ThenBy(c => c.Id).ToListAsync();
+            var items = await db.Items.Where(i => i.IsActive).OrderBy(i => i.Name).ToListAsync();
+            var menu = categories.Where(c => !isEmployee || c.IsFor(groupId))
+                .Select(c => new { category = MenuEndpoints.Dto(c), items = items.Where(i => i.CategoryId == c.Id).ToList() })
+                .Where(x => x.items.Count > 0)
+                .Select(x => (object)new { x.category, items = x.items.Select(i => new { i.Id, i.Name, i.Price }) })
+                .ToList();
+            var other = items.Where(i => i.CategoryId == null).ToList();
+            if (other.Count > 0)
+                menu.Add(new
+                {
+                    category = new { id = (int?)null, name = "سایر", startTime = (string?)null, endTime = (string?)null, open = true },
+                    items = other.Select(i => new { i.Id, i.Name, i.Price }),
+                });
+            return new { now = MenuEndpoints.Hhmm(MenuEndpoints.Now()), menu };
+        });
 
         // Cards to pay into, shown on everyone's account page.
         g.MapGet("/cards", async (AppDb db) =>
