@@ -93,7 +93,7 @@ public static class ReportEndpoints
                 payments = await payments.OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.Id).Take(MaxEntries)
                     .Select(p => new
                     {
-                        p.Id, p.PersonId, personName = p.Person.Name, p.Amount,
+                        p.Id, p.PersonId, personName = p.Person.Name, p.Amount, cardTitle = p.PaymentCard!.Title,
                         p.Note, p.CreatedAt, p.CreatedBy, p.VoidedAt, p.VoidedBy, p.VoidReason,
                         settled = db.Settlements.Any(s => s.PersonId == p.PersonId && s.VoidedAt == null && s.Until > p.CreatedAt),
                     }).ToListAsync(),

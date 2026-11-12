@@ -57,6 +57,9 @@ public static class RequestEndpoints
             if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
             if (await db.Requests.CountAsync(r => r.PersonId == personId && r.Status == RequestStatus.Pending) >= MaxPendingPerPerson)
                 return ApiErrors.Bad($"شما {MaxPendingPerPerson} درخواست در انتظار دارید؛ صبر کنید تا رسیدگی شوند.");
+            // During a settlement drive nobody with an open debt can order anything, free items included.
+            if (await Balances.ActiveDrive(db) != null && await Balances.Total(db, personId) is var balance and > 0)
+                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(balance));
 
             var itemIds = lines.Select(l => l.ItemId).ToList();
             var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
@@ -149,6 +152,67 @@ public static class RequestEndpoints
             lastReminder = await db.Requests.Where(r => r.Status == RequestStatus.Pending).MaxAsync(r => r.RemindedAt),
         });
 
+        // The manager changes a pending request before accepting it: fewer or more of an item, an item removed
+        // (e.g. out of stock) or added. Staff-group limits still apply; opening hours don't (like manual orders).
+        g.MapPut("/{id:int}", async (int id, EditRequestLines req, HttpContext ctx, AppDb db) =>
+        {
+            var request = await db.Requests.Include(r => r.Lines).Include(r => r.Person).FirstOrDefaultAsync(r => r.Id == id);
+            if (request == null) return ApiErrors.NotFound("درخواست پیدا نشد.");
+            if (request.Status != RequestStatus.Pending) return ApiErrors.Conflict("فقط درخواست در انتظار قابل ویرایش است؛ اول «بازگشت از تأیید» را بزنید.");
+            var lines = (req.Lines ?? []).Where(l => l.Quantity > 0)
+                .GroupBy(l => l.ItemId).Select(x => new OrderLine(x.Key, x.Sum(l => l.Quantity))).ToList();
+            if (lines.Count == 0) return ApiErrors.Bad("درخواست بدون قلم نمی‌شود؛ اگر هیچ‌کدام موجود نیست، درخواست را رد کنید.");
+            if (lines.Count > MaxLines) return ApiErrors.Bad($"حداکثر {MaxLines} قلم در هر درخواست.");
+            if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
+
+            var itemIds = lines.Select(l => l.ItemId).ToList();
+            var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
+            if (items.Count != itemIds.Count) return ApiErrors.Bad("یکی از اقلام انتخاب‌شده معتبر یا فعال نیست.");
+            var notForPerson = items.Values.FirstOrDefault(i => i.Category != null && !i.Category.IsFor(request.Person.GroupId));
+            if (notForPerson != null)
+                return ApiErrors.Bad($"«{notForPerson.Name}» از دسته‌ی «{notForPerson.Category!.Name}» است که برای گروه این شخص نیست.");
+
+            db.RemoveRange(request.Lines);
+            request.Lines = lines.Select(l => new PantryRequestLine { ItemId = l.ItemId, ItemName = items[l.ItemId].Name, Quantity = l.Quantity }).ToList();
+            request.EditedAt = DateTime.UtcNow;
+            request.EditedBy = ctx.User.Identity!.Name;
+            await db.SaveChangesAsync();
+            return Results.Ok();
+        });
+
+        // Undo: a handled request goes back to pending so it can be edited and accepted again. For an accepted
+        // one, the orders it created are voided (kept in history with the reason, like any void).
+        g.MapPost("/{id:int}/reopen", async (int id, HttpContext ctx, AppDb db) =>
+        {
+            var request = await db.Requests.FindAsync(id);
+            if (request == null) return ApiErrors.NotFound("درخواست پیدا نشد.");
+            if (request.Status is not (RequestStatus.Done or RequestStatus.Rejected))
+                return ApiErrors.Conflict("فقط درخواست ثبت‌شده یا ردشده را می‌شود برگرداند.");
+            var by = ctx.User.Identity!.Name;
+            if (request.Status == RequestStatus.Done)
+            {
+                var orders = await db.Orders.Where(o => o.PantryRequestId == id && o.VoidedAt == null).ToListAsync();
+                if (orders.Count == 0)
+                    return ApiErrors.Conflict("سفارش‌های این درخواست پیدا نشد (احتمالاً پیش از این نسخه ثبت شده یا دستی ابطال شده)؛ از «گزارش» اصلاح کنید.");
+                var orderedAt = orders.Min(o => o.CreatedAt);
+                if (await db.Settlements.AnyAsync(s => s.PersonId == request.PersonId && s.VoidedAt == null && orderedAt < s.Until))
+                    return ApiErrors.Conflict("حساب این شخص بعد از این سفارش تسویه شده؛ بازگشت ممکن نیست.");
+                var now = DateTime.UtcNow;
+                foreach (var o in orders)
+                {
+                    o.VoidedAt = now;
+                    o.VoidedBy = by;
+                    o.VoidReason = "بازگشت از تأیید درخواست برای ویرایش";
+                }
+            }
+            request.Status = RequestStatus.Pending;
+            request.HandledAt = null;
+            request.HandledBy = null;
+            request.RejectReason = null;
+            await db.SaveChangesAsync();
+            return Results.Ok();
+        });
+
         // Accepting records the request as orders at today's prices.
         g.MapPost("/{id:int}/accept", async (int id, HttpContext ctx, AppDb db, WebPush push) =>
         {
@@ -168,6 +232,7 @@ public static class RequestEndpoints
             {
                 PersonId = request.PersonId, ItemId = l.ItemId, ItemName = items[l.ItemId].Name, UnitPrice = items[l.ItemId].Price,
                 Quantity = l.Quantity, Total = items[l.ItemId].Price * l.Quantity, Note = request.Note, CreatedAt = now, CreatedBy = by,
+                PantryRequestId = request.Id,
             }).ToList();
             db.Orders.AddRange(orders);
             request.Status = RequestStatus.Done;
@@ -178,7 +243,7 @@ public static class RequestEndpoints
             _ = push.NotifyPerson(request.PersonId, new
             {
                 title = "☕ درخواستت دیده شد",
-                body = FaDigits($"{Describe(request)} — تا دقایقی دیگر آماده می‌شود."),
+                body = FaDigits($"{Describe(request)}{(request.EditedAt != null ? " (با تغییر مسئول)" : "")} — تا دقایقی دیگر آماده می‌شود."),
                 tag = $"request-{request.Id}",
                 url = "/#/prices",
             });
@@ -239,7 +304,7 @@ public static class RequestEndpoints
         q.Select(r => new
         {
             r.Id, r.PersonId, personName = r.Person.Name, r.Note, r.Status, r.CreatedAt, r.HandledAt, r.HandledBy, r.RejectReason,
-            r.RemindedAt, r.RemindCount,
+            r.RemindedAt, r.RemindCount, r.EditedAt, r.EditedBy,
             lines = r.Lines.Select(l => new
             {
                 l.ItemId, l.ItemName, l.Quantity,

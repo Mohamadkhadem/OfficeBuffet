@@ -89,6 +89,7 @@ app.MapAdmin();
 app.MapRequests();
 app.MapImport();
 app.MapMenu();
+app.MapBalances();
 app.MapFallbackToFile("index.html", new StaticFileOptions { ContentTypeProvider = contentTypes });
 
 app.Run();

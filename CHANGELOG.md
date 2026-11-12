@@ -4,6 +4,23 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.3.0] - 2026-11-12
+
+### Added
+- Debt per card: a menu category can be tied to a bank card; balances are shown split by card (plus "other" for
+  categories without a card) on the account and payments pages. Payments can be recorded to a card; a payment
+  without a card pays off card debts in card order.
+- The manager can edit a pending request (change counts, remove or add items) before accepting it; colleagues
+  see that it was changed.
+- Undo for handled requests: an accepted request goes back to pending and the orders it created are voided with
+  a reason (blocked if the account was settled after it); a rejected one simply goes back to pending.
+- Settlement drive: "Start settlement" notifies every colleague; until "End settlement", anyone with an open
+  debt cannot send requests, free items included (enforced by the server). The manager sees who still owes.
+
+### Changed
+- Payments page: searchable one-tap person picker with balances, balance split by card with "pay this card"
+  buttons, and a card choice on each payment.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added
@@ -59,6 +76,7 @@ First public release.
 - Self-contained Windows build; Windows service scripts and IIS `web.config` included.
 - `tools/new-certificate.ps1` to create a private CA and HTTPS certificate for the office network.
 
+[1.3.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.0.0

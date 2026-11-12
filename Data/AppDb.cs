@@ -16,6 +16,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<PaymentCard> PaymentCards => Set<PaymentCard>();
     public DbSet<MenuCategory> MenuCategories => Set<MenuCategory>();
     public DbSet<PersonGroup> PersonGroups => Set<PersonGroup>();
+    public DbSet<SettlementDrive> SettlementDrives => Set<SettlementDrive>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -38,6 +39,10 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         b.Entity<MenuCategory>().HasOne(x => x.PersonGroup).WithMany().OnDelete(DeleteBehavior.Restrict);
         b.Entity<Item>().HasOne(x => x.Category).WithMany().OnDelete(DeleteBehavior.Restrict);
         b.Entity<Person>().HasOne(x => x.Group).WithMany().OnDelete(DeleteBehavior.Restrict);
+        // Removing a card leaves its categories and payments as "general" (not tied to a card).
+        b.Entity<MenuCategory>().HasOne(x => x.PaymentCard).WithMany().OnDelete(DeleteBehavior.SetNull);
+        b.Entity<Payment>().HasOne(x => x.PaymentCard).WithMany().OnDelete(DeleteBehavior.SetNull);
+        b.Entity<Order>().HasIndex(x => x.PantryRequestId);
         b.Entity<Order>().HasIndex(x => x.CreatedAt);
         b.Entity<Order>().HasIndex(x => x.PersonId);
         b.Entity<Payment>().HasIndex(x => x.CreatedAt);

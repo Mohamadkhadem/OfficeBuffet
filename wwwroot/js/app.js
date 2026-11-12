@@ -197,6 +197,7 @@ function entryHtml(e, { showPerson = true, canVoid = false } = {}) {
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     fmtDT(e.createdAt),
     isOrder && e.quantity > 1 ? `هر عدد ${fa(e.unitPrice)}` : null,
+    !isOrder && e.cardTitle ? `💳 ${esc(e.cardTitle)}` : null,
     e.note ? esc(e.note) : null,
     `ثبت: ${esc(e.createdBy)}`,
     e.enteredAt ? `<span class="late">ثبت بعدی در ${fmtDT(e.enteredAt)}</span>` : null,
@@ -297,10 +298,10 @@ async function viewReport(_, alive) {
 
 async function viewPerson(id, alive) {
   if (isEmployee()) id = state.me.personId;
-  const [summary, entries, cards] = await Promise.all([
+  const [summary, entries, balance] = await Promise.all([
     api('/api/report/summary?' + rangeQuery(state.period)),
     api('/api/report/entries?' + rangeQuery(state.period, { personId: id })),
-    isEmployee() ? api('/api/report/cards') : [],
+    api(`/api/report/balance?personId=${id}`),
   ]);
   if (!alive()) return;
   const list = mergeEntries(entries);
@@ -309,6 +310,7 @@ async function viewPerson(id, alive) {
 
   view.innerHTML = `
     <div class="page-title"><h1>${esc(p.name)}</h1>${isAdmin() ? '<a class="btn ghost small" href="#/report">بازگشت به گزارش</a>' : ''}</div>
+    ${isEmployee() ? driveBannerHtml(balance) : ''}
     <div class="card">
       <div class="card-head">
         <div class="muted">مانده‌ی حساب ${p.settledUntil ? `(بعد از تسویه تا ${faDigits(p.settledUntil)})` : '(از ابتدا تا امروز)'}</div>
@@ -316,7 +318,7 @@ async function viewPerson(id, alive) {
       </div>
       <div class="balance-big">${money(Math.abs(p.balance))}</div>
       ${balanceBadge(p.balance)}
-      ${payCardsHtml(cards)}
+      ${balanceBreakdownHtml(balance, { copy: isEmployee() })}
     </div>
     ${chipsHtml()}
     <div class="stats">
@@ -595,12 +597,16 @@ async function viewOrder(_, alive) {
 }
 
 async function viewPayments(preselectId, alive) {
-  const [people, summary, entries] = await Promise.all([
-    api('/api/admin/people'), api('/api/report/summary'), api('/api/report/entries'),
+  const [people, summary, entries, cards, drive] = await Promise.all([
+    api('/api/admin/people'), api('/api/report/summary'), api('/api/report/entries'), api('/api/admin/cards'), api('/api/report/drive'),
   ]);
   if (!alive()) return;
   const info = new Map(summary.people.map((p) => [p.id, p]));
   const history = mergeEntries({ orders: [], payments: entries.payments, settlements: entries.settlements });
+  // Active people, plus inactive ones who still have an open balance; debtors first is less useful than a
+  // stable alphabetical list here, the badge shows who owes.
+  const choosable = people.filter((p) => p.isActive || (info.get(p.id)?.balance ?? 0) !== 0).sort(byName);
+  let selected = null;
   const lastMonthEnd = (() => {
     const j = parseJalali(jalaliLabel());
     const d = new Date(j.date);
@@ -611,21 +617,34 @@ async function viewPayments(preselectId, alive) {
 
   view.innerHTML = `
     <div class="page-title"><h1>پرداخت و تسویه</h1></div>
+    <div class="card drive-card ${drive.active ? 'on' : ''}" id="drive"></div>
+    <div class="card">
+      <div class="card-head"><h2>برای چه کسی؟</h2></div>
+      <input class="search" id="pq" placeholder="جستجوی نام…" autocomplete="off">
+      <div class="people-grid pay-people" id="pgrid">
+        ${choosable.map((p) => {
+          const b = info.get(p.id)?.balance ?? 0;
+          return `<button type="button" class="person-btn" data-pick="${p.id}" data-name="${esc(p.name)}">
+            <span>${esc(p.name)}${p.isActive ? '' : ' <small>(غیرفعال)</small>'}</span>
+            ${b > 0 ? `<small class="debt">${fa(b)}</small>` : b < 0 ? `<small class="credit">+${fa(-b)}</small>` : ''}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
     <div class="cols">
       <div>
-        <div class="card">
-          <label>شخص
-            <select id="person">
-              <option value="">انتخاب کنید…</option>
-              ${people.sort(byName).map((p) => `<option value="${p.id}">${esc(p.name)}${p.isActive ? '' : ' (غیرفعال)'}</option>`).join('')}
-            </select>
-          </label>
-          <div id="bal" class="muted" style="margin-top:8px"></div>
+        <div class="card" id="who">
+          <div class="muted">از بالا یک نفر را انتخاب کنید؛ مانده‌ی حساب او به تفکیک کارت اینجا نمایش داده می‌شود.</div>
         </div>
         <div class="card">
           <div class="card-head"><h2>ثبت پرداخت</h2></div>
           <form class="form" id="pay">
             <label>مبلغ (تومان)<input name="amount" id="amount" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
+            ${cards.length ? `<label>به کدام کارت؟
+              <select name="cardId" id="pay-card">
+                <option value="">کلی (بدون کارت)</option>
+                ${cards.map((c) => `<option value="${c.id}">${esc(c.title)}</option>`).join('')}
+              </select></label>` : ''}
             <label>توضیح (اختیاری)<input name="note" maxlength="200" placeholder="مثلاً کارت‌به‌کارت"></label>
             <button class="btn">ثبت پرداخت</button>
           </form>
@@ -654,26 +673,41 @@ async function viewPayments(preselectId, alive) {
       </div>
     </div>`;
 
-  const personSel = $('#person');
   const untilInput = $('#until');
-  const personId = () => Number(personSel.value) || null;
+  const personId = () => selected;
   const reopen = () => {
     const hash = `#/payments/${personId() ?? ''}`;
     if (location.hash === hash) route(); else location.hash = hash;
   };
+  bindSearch($('#pq'), $('#pgrid'));
+  renderDrive($('#drive'), drive, (id) => pick(id));
 
-  const renderPerson = () => {
+  let balanceSeq = 0;
+  const renderPerson = async () => {
     const id = personId();
     const p = info.get(id);
-    const b = p?.balance ?? 0;
-    $('#bal').innerHTML = id
-      ? `مانده: ${balanceBadge(b)}${p?.settledUntil ? ` · آخرین تسویه تا ${faDigits(p.settledUntil)}` : ''}
-         ${b > 0 ? ' <button type="button" class="btn link small" id="fill">پرداخت کل بدهی</button>' : ''}`
-      : '';
+    const person = people.find((x) => x.id === id);
+    view.querySelectorAll('[data-pick]').forEach((b) => b.classList.toggle('current', Number(b.dataset.pick) === id));
     const list = id ? history.filter((e) => e.personId === id) : history;
-    $('#history-title').textContent = id ? `پرداخت‌ها و تسویه‌های ${p?.name ?? ''}` : 'آخرین پرداخت‌ها و تسویه‌ها';
+    $('#history-title').textContent = id ? `پرداخت‌ها و تسویه‌های ${person?.name ?? ''}` : 'آخرین پرداخت‌ها و تسویه‌ها';
     $('#history').innerHTML = entriesHtml(list, { showPerson: !id, canVoid: true });
     updatePreview();
+    if (!id) return;
+    const seq = ++balanceSeq;
+    $('#who').innerHTML = `<div class="who-head"><div class="who">${esc(person?.name ?? '')}</div>${balanceBadge(p?.balance ?? 0)}</div>`;
+    const b = await api(`/api/report/balance?personId=${id}`);
+    if (seq !== balanceSeq || !alive()) return;
+    $('#who').innerHTML = `
+      <div class="who-head"><div class="who">${esc(person?.name ?? '')}</div>${balanceBadge(b.total)}</div>
+      ${p?.settledUntil ? `<div class="muted" style="font-size:13px">آخرین تسویه تا ${faDigits(p.settledUntil)}</div>` : ''}
+      ${balanceBreakdownHtml(b, { payButtons: true })}
+      ${b.total > 0 ? `<button type="button" class="btn ghost small" data-fill="all:${b.total}" style="margin-top:10px">پرداخت کل بدهی (${fa(b.total)} تومان)</button>` : ''}`;
+  };
+  // One tap selects; the page scrolls to the payment form on phones.
+  const pick = (id) => {
+    selected = id;
+    renderPerson();
+    if (!isWide()) $('#who').scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   let previewSeq = 0;
@@ -697,14 +731,20 @@ async function viewPayments(preselectId, alive) {
     }
   }
 
-  personSel.addEventListener('change', renderPerson);
   untilInput.addEventListener('input', updatePreview);
   view.addEventListener('click', (e) => {
+    const person = e.target.closest('[data-pick]');
+    if (person) return pick(Number(person.dataset.pick));
     const chip = e.target.closest('[data-until]');
     if (chip) { untilInput.value = faDigits(chip.dataset.until); updatePreview(); return; }
-    if (e.target.closest('#fill')) {
-      $('#amount').value = info.get(personId())?.balance ?? '';
+    // "Pay this card's debt" / "pay everything": fills the form, the manager still confirms with the button.
+    const fill = e.target.closest('[data-fill]');
+    if (fill) {
+      const [card, amount] = fill.dataset.fill.split(':');
+      $('#amount').value = amount;
       $('#amount').dispatchEvent(new Event('input'));
+      if ($('#pay-card')) $('#pay-card').value = card === 'all' || card === 'general' ? '' : card;
+      $('#amount').focus();
     }
   });
   bindAmountHints(view);
@@ -713,7 +753,8 @@ async function viewPayments(preselectId, alive) {
     if (!personId()) throw new Error('ابتدا شخص را انتخاب کنید.');
     const amount = parseAmount(fd.get('amount'));
     if (!(amount > 0)) throw new Error('مبلغ معتبر وارد کنید.');
-    await api('/api/admin/payments', { method: 'POST', body: { personId: personId(), amount, note: fd.get('note') } });
+    const paymentCardId = fd.get('cardId') ? Number(fd.get('cardId')) : null;
+    await api('/api/admin/payments', { method: 'POST', body: { personId: personId(), amount, note: fd.get('note'), paymentCardId } });
     toast('پرداخت ثبت شد.');
     reopen();
   });
@@ -721,7 +762,7 @@ async function viewPayments(preselectId, alive) {
   onSubmit($('#settle'), async (fd) => {
     const j = parseJalali(fd.get('until'));
     if (!personId() || !j) throw new Error('شخص و تاریخ را درست وارد کنید.');
-    const name = info.get(personId())?.name ?? personSel.selectedOptions[0].textContent;
+    const name = people.find((x) => x.id === personId())?.name ?? '';
     if (!confirm(`حساب «${name}» تا پایان ${faDigits(j.label)} تسویه شود؟`)) return;
     const cutoff = new Date(j.date);
     cutoff.setDate(cutoff.getDate() + 1);
@@ -732,9 +773,81 @@ async function viewPayments(preselectId, alive) {
     reopen();
   });
 
-  if (people.some((p) => String(p.id) === preselectId)) personSel.value = preselectId;
+  if (people.some((p) => String(p.id) === preselectId)) selected = Number(preselectId);
   renderPerson();
 }
+
+// ---------- balances by card, settlement drive ----------
+/**
+ * A balance split by bank card ({ total, cards: [{id, title, number, balance}], general }).
+ * With `copy`, card numbers can be tapped to copy (colleague's page); with `payButtons`, each owed part gets a
+ * button that fills the payment form (manager's page).
+ */
+function balanceBreakdownHtml(b, { copy = false, payButtons = false } = {}) {
+  if (!b.cards.length) return '';
+  const amount = (n) => (n > 0 ? `<span class="debt">بدهی ${fa(n)}</span>` : n < 0 ? `<span class="credit">طلب ${fa(-n)}</span>` : '<span class="muted">۰</span>');
+  const fill = (key, n) => (payButtons && n > 0 ? `<button type="button" class="btn link small" data-fill="${key}:${n}">پرداخت</button>` : '');
+  return `
+    <div class="pay-cards">
+      ${copy ? '<div class="muted" style="font-size:13px">بدهی به تفکیک کارت؛ برای پرداخت روی شماره کارت بزنید تا کپی شود:</div>' : ''}
+      ${b.cards.map((c) => `
+        <div class="pay-card-row">
+          ${copy
+            ? `<button type="button" class="pay-card" data-copy="${esc(c.number)}" title="کپی شماره کارت">
+                 <span class="t">${esc(c.title)}</span><span class="n">${cardNumberText(c.number)}</span><span class="c">📋 کپی</span>
+               </button>`
+            : `<div class="pay-card static"><span class="t">${esc(c.title)}</span><span class="n">${cardNumberText(c.number)}</span></div>`}
+          <div class="card-balance">${amount(c.balance)}${fill(c.id, c.balance)}</div>
+        </div>`).join('')}
+      ${b.general !== 0 ? `
+        <div class="pay-card-row">
+          <div class="pay-card static"><span class="t">سایر (بدون کارت)</span><span class="n" style="font-size:14px">اقلامی که دسته‌شان کارت ندارد</span></div>
+          <div class="card-balance">${amount(b.general)}${fill('general', b.general)}</div>
+        </div>` : ''}
+    </div>`;
+}
+
+/** Manager's "settlement drive" card on the payments page: start / end, and who still owes. */
+async function renderDrive(card, drive, onPick) {
+  if (!drive.active) {
+    card.classList.remove('on');
+    card.innerHTML = `
+      <div class="card-head"><h2>💳 تسویه حساب همگانی</h2><button type="button" class="btn" id="drive-start">شروع تسویه</button></div>
+      <p class="muted" style="margin:0">با شروع تسویه، برای همه اعلان «درخواست تسویه حساب» می‌رود و تا وقتی «پایان تسویه» را نزنید، هر کس بدهکار باشد نمی‌تواند هیچ درخواستی ثبت کند (حتی اقلام رایگان).</p>`;
+  } else {
+    const debtors = await api('/api/admin/drive/debtors');
+    card.classList.add('on');
+    card.innerHTML = `
+      <div class="card-head"><h2>💳 تسویه در جریان است</h2><button type="button" class="btn danger" id="drive-end">پایان تسویه</button></div>
+      <p class="muted" style="margin:0 0 10px">از ${fmtDT(drive.startedAt)}${drive.startedBy ? ` توسط ${esc(drive.startedBy)}` : ''}. بدهکارها تا پرداخت نکنند درخواست ثبت نمی‌کنند.</p>
+      ${debtors.length ? `<div class="debtors">${debtors.map((d) => `
+        <button type="button" class="chip" data-debtor="${d.personId}">${esc(d.name)} · ${fa(d.balance)}</button>`).join('')}</div>`
+        : '<div class="badge credit">همه تسویه کرده‌اند 🎉</div>'}`;
+  }
+  card.onclick = async (e) => {
+    const debtor = e.target.closest('[data-debtor]');
+    if (debtor) return onPick(Number(debtor.dataset.debtor));
+    const start = e.target.closest('#drive-start');
+    const end = e.target.closest('#drive-end');
+    if (!start && !end) return;
+    if (start && !confirm('تسویه شروع شود؟ برای همه اعلان می‌رود و بدهکارها تا پرداخت، درخواست ثبت نمی‌کنند.')) return;
+    if (end && !confirm('تسویه تمام شود؟ ثبت درخواست برای همه آزاد می‌شود.')) return;
+    try {
+      const next = await api(`/api/admin/drive/${start ? 'start' : 'end'}`, { method: 'POST' });
+      toast(start ? 'تسویه شروع شد و برای همه اعلان رفت.' : 'تسویه تمام شد.');
+      renderDrive(card, next, onPick);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+/** Colleague-facing banner while a settlement drive is on. */
+const driveBannerHtml = (b) => (b.drive?.active ? `
+  <div class="card drive-banner ${b.total > 0 ? 'blocked' : ''}">
+    <b>💳 درخواست تسویه حساب</b>
+    <p>مسئول بوفه درخواست تسویه حساب ارسال کرده است. ${b.total > 0
+      ? `حساب شما <b>${fa(b.total)} تومان</b> بدهکار است؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
+      : 'حساب شما بدهی ندارد؛ ممنون 🙏'}</p>
+  </div>` : '');
 
 // ---------- Excel import (items and people) ----------
 const IMPORT_KINDS = {
@@ -905,7 +1018,9 @@ function openImport(kind, container) {
 }
 
 async function viewItems(_, alive) {
-  const [items, categories, groups] = await Promise.all([api('/api/admin/items'), api('/api/admin/categories'), api('/api/admin/groups')]);
+  const [items, categories, groups, cards] = await Promise.all([
+    api('/api/admin/items'), api('/api/admin/categories'), api('/api/admin/groups'), api('/api/admin/cards'),
+  ]);
   if (!alive()) return;
   // Items grouped in menu order; items without a category come last under "سایر".
   const sections = [
@@ -995,7 +1110,7 @@ async function viewItems(_, alive) {
     toast(editingId ? 'ذخیره شد.' : 'کالا اضافه شد.');
     route();
   });
-  renderCategoriesAdmin($('#cats'), categories, groups);
+  renderCategoriesAdmin($('#cats'), categories, groups, cards);
 }
 
 // ---------- menu categories and staff groups ----------
@@ -1004,16 +1119,18 @@ const hhmm = (t) => faDigits(t ?? '');
 /** Small badges for a category's rules: opening hours and staff group. */
 const categoryRulesHtml = (c) => `
   ${c.startTime ? `<span class="badge ${c.open === false ? 'debt' : 'wait'}" title="${c.open === false ? 'الان بسته است' : 'الان باز است'}">⏰ ${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
-  ${c.personGroup ? `<span class="badge warn">👥 فقط ${esc(c.personGroup)}</span>` : ''}`;
+  ${c.personGroup ? `<span class="badge warn">👥 فقط ${esc(c.personGroup)}</span>` : ''}
+  ${c.paymentCard ? `<span class="badge zero">💳 ${esc(c.paymentCard)}</span>` : ''}`;
 
-/** "Menu categories" card on the items page: name, opening hours, staff group, order. */
-function renderCategoriesAdmin(card, categories, groups) {
+/** "Menu categories" card on the items page: name, opening hours, staff group, bank card, order. */
+function renderCategoriesAdmin(card, categories, groups, cards) {
   let editingId = null;
   card.innerHTML = `
     <div class="card-head"><h2>دسته‌بندی منو</h2></div>
     <p class="muted" style="margin-top:0">
       دسته‌ی بدون زمان‌بندی همیشه باز است؛ با زمان‌بندی، همکاران فقط در همان بازه از آن درخواست می‌دهند.
       دسته‌ای که به یک گروه پرسنلی داده شود فقط برای همان گروه نمایش داده می‌شود؛ بدون گروه، برای همه است.
+      با انتخاب کارت، بدهی خریدهای این دسته جداگانه برای همان کارت حساب می‌شود.
     </p>
     <div class="list">
       ${categories.length ? categories.map((c, i) => `
@@ -1043,6 +1160,13 @@ function renderCategoriesAdmin(card, categories, groups) {
         </select>
         ${groups.length ? '' : '<span class="hint">گروه‌ها در صفحه‌ی «افراد» تعریف می‌شوند.</span>'}
       </label>
+      <label>کارت پرداخت این دسته
+        <select name="paymentCardId">
+          <option value="">بدون کارت (در بدهی کلی)</option>
+          ${cards.map((c) => `<option value="${c.id}">${esc(c.title)} — ${cardNumberText(c.number)}</option>`).join('')}
+        </select>
+        ${cards.length ? '' : '<span class="hint">کارت‌ها در صفحه‌ی «تنظیمات» تعریف می‌شوند.</span>'}
+      </label>
       <div class="row-end">
         <button type="button" class="btn ghost" id="cat-cancel" hidden>انصراف</button>
         <button class="btn" id="cat-save">افزودن دسته</button>
@@ -1058,6 +1182,7 @@ function renderCategoriesAdmin(card, categories, groups) {
       form.elements.startTime.value = c.startTime ?? '';
       form.elements.endTime.value = c.endTime ?? '';
       form.elements.personGroupId.value = c.personGroupId ?? '';
+      form.elements.paymentCardId.value = c.paymentCardId ?? '';
       form.scrollIntoView({ behavior: 'smooth', block: 'center' });
       form.elements.name.focus();
     }
@@ -1090,6 +1215,7 @@ function renderCategoriesAdmin(card, categories, groups) {
       startTime: fd.get('startTime') || null,
       endTime: fd.get('endTime') || null,
       personGroupId: fd.get('personGroupId') ? Number(fd.get('personGroupId')) : null,
+      paymentCardId: fd.get('paymentCardId') ? Number(fd.get('paymentCardId')) : null,
     };
     await api(editingId ? `/api/admin/categories/${editingId}` : '/api/admin/categories', { method: editingId ? 'PUT' : 'POST', body });
     toast(editingId ? 'دسته ذخیره شد.' : 'دسته اضافه شد.');
@@ -1327,18 +1453,6 @@ async function copyText(text) {
   return ok;
 }
 
-/** Card list with a copy action on each number (colleague's account page). */
-const payCardsHtml = (cards) => (cards.length ? `
-  <div class="pay-cards">
-    <div class="muted" style="font-size:13px">برای پرداخت، روی شماره کارت بزنید تا کپی شود:</div>
-    ${cards.map((c) => `
-      <button type="button" class="pay-card" data-copy="${esc(c.number)}" title="کپی شماره کارت">
-        <span class="t">${esc(c.title)}</span>
-        <span class="n">${cardNumberText(c.number)}</span>
-        <span class="c">📋 کپی</span>
-      </button>`).join('')}
-  </div>` : '');
-
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-copy]');
   if (!btn) return;
@@ -1391,7 +1505,7 @@ async function renderCardsAdmin(card, alive) {
     const del = e.target.closest('[data-card-del]');
     if (!del) return;
     const c = cards.find((x) => x.id == del.dataset.cardDel);
-    if (!confirm(`کارت «${c.title}» حذف شود؟`)) return;
+    if (!confirm(`کارت «${c.title}» حذف شود؟\nدسته‌ها و پرداخت‌هایی که به این کارت وصل‌اند «بدون کارت» می‌شوند (جمع بدهی‌ها تغییری نمی‌کند).`)) return;
     try { await api(`/api/admin/cards/${c.id}`, { method: 'DELETE' }); toast('کارت حذف شد.'); renderCardsAdmin(card, alive); }
     catch (err) { toast(err.message, true); }
   };
@@ -1423,10 +1537,12 @@ const statusBadge = (s) => `<span class="badge ${REQUEST_STATUS[s][1]}">${REQUES
 
 /** Employee page: the price list doubles as a request form ("I'd like a coffee"). */
 async function viewPrices(_, alive) {
-  const { now: serverNow, menu } = await api('/api/report/prices');
+  const [{ now: serverNow, menu }, balance] = await Promise.all([api('/api/report/prices'), api('/api/report/balance')]);
   if (!alive()) return;
   const items = menu.flatMap((s) => s.items);
   const cart = new Map();
+  // During a settlement drive someone who owes money can't send requests (the server refuses them too).
+  const blocked = balance.drive.active && balance.total > 0;
 
   // Opening hours are in office (server) time; measure this device's clock against it once, so sections
   // open and close on time while the page stays open.
@@ -1442,6 +1558,8 @@ async function viewPrices(_, alive) {
 
   view.innerHTML = `
     <div class="page-title"><h1>لیست قیمت و درخواست</h1></div>
+    ${driveBannerHtml(balance)}
+    ${blocked && balance.cards.length ? `<div class="card">${balanceBreakdownHtml(balance, { copy: true })}</div>` : ''}
     <div class="card" id="push" hidden></div>
     <div class="card">
       ${items.length ? `
@@ -1481,7 +1599,8 @@ async function viewPrices(_, alive) {
     const count = sum(lines, ([, q]) => q);
     $('#cnt').textContent = count ? `${fa(count)} قلم انتخاب شده` : 'هنوز چیزی انتخاب نشده';
     $('#tot').innerHTML = money(sum(lines, ([id, q]) => items.find((i) => i.id === id).price * q));
-    $('#submit').disabled = count === 0;
+    $('#submit').disabled = count === 0 || blocked;
+    if (blocked) $('#submit').textContent = 'تا تسویه، ارسال ممکن نیست';
     $('#clear-cart').hidden = count === 0;
   };
   const clearCart = () => {
@@ -1532,6 +1651,7 @@ async function viewPrices(_, alive) {
       <div class="list-row">
         <div class="grow">
           ${linesHtml(r.lines)}
+          ${r.editedAt ? '<span class="badge warn">✏️ مسئول بوفه تغییرش داد</span>' : ''}
           <div class="sub">${fmtDT(r.createdAt)}${r.note ? ' · ' + esc(r.note) : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}${r.status === 'pending' && r.remindCount ? ` · ${fa(r.remindCount)} بار تلنگر زدی` : ''}</div>
         </div>
         ${statusBadge(r.status)}
@@ -1634,10 +1754,10 @@ async function viewRequests(tab, alive) {
     ${done ? '' : `<div class="card">
       <div class="list">
         ${data.pending.length ? data.pending.map((r) => `
-          <div class="list-row request-row">
+          <div class="list-row request-row" data-request="${r.id}">
             <div class="grow">
-              <div class="title">${esc(r.personName)}</div>
-              ${linesHtml(r.lines, true)}
+              <div class="title">${esc(r.personName)} ${editedBadge(r)}</div>
+              <div class="req-lines">${linesHtml(r.lines, true)}</div>
               ${r.note ? `<div class="req-note">📝 ${esc(r.note)}</div>` : ''}
               <div class="sub">${fmtDT(r.createdAt)}</div>
               ${r.remindCount ? `<div class="sub"><span class="badge warn">👋 ${fa(r.remindCount)} بار تلنگر زده · آخرین ${fmtDT(r.remindedAt)}</span></div>` : ''}
@@ -1645,6 +1765,7 @@ async function viewRequests(tab, alive) {
             <div class="amount">${money(estimate(r))}</div>
             <div class="actions">
               <button class="btn small" data-accept="${r.id}">ثبت سفارش</button>
+              <button class="btn link small" data-edit-request="${r.id}">✏️ ویرایش</button>
               <button class="btn link danger small" data-reject="${r.id}">رد</button>
             </div>
           </div>`).join('') : '<div class="empty">درخواستی در انتظار نیست.</div>'}
@@ -1656,11 +1777,13 @@ async function viewRequests(tab, alive) {
           ${data.recent.length ? data.recent.map((r) => `
             <div class="list-row">
               <div class="grow">
-                <div class="title">${esc(r.personName)}</div>
+                <div class="title">${esc(r.personName)} ${editedBadge(r)}</div>
                 ${linesHtml(r.lines)}
                 <div class="sub">${fmtDT(r.handledAt || r.createdAt)}${r.handledBy ? ` · ${esc(r.handledBy)}` : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}</div>
               </div>
               ${statusBadge(r.status)}
+              ${r.status === 'done' || r.status === 'rejected'
+                ? `<button class="btn link small" data-reopen="${r.id}:${r.status}" title="برگرداندن به «در انتظار» برای ویرایش و تأیید دوباره">↩️ ${r.status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>` : ''}
             </div>`).join('') : '<div class="empty">هنوز درخواستی رسیدگی نشده است.</div>'}
         </div>
       </div>` : ''}`;
@@ -1683,10 +1806,105 @@ async function viewRequests(tab, alive) {
       catch (err) { toast(err.message, true); }
       return route();
     }
+    const edit = e.target.closest('[data-edit-request]');
+    if (edit) return openRequestEditor(data.pending.find((r) => r.id == edit.dataset.editRequest));
+    const reopen = e.target.closest('[data-reopen]');
+    if (reopen) {
+      const [id, status] = reopen.dataset.reopen.split(':');
+      const text = status === 'done'
+        ? 'سفارش‌هایی که این درخواست ساخته بود ابطال می‌شوند (در سابقه می‌مانند) و درخواست به «در انتظار» برمی‌گردد تا ویرایش و دوباره تأیید کنید. ادامه می‌دهید؟'
+        : 'این درخواست ردشده به «در انتظار» برمی‌گردد. ادامه می‌دهید؟';
+      if (!confirm(text)) return;
+      try {
+        await api(`/api/admin/requests/${id}/reopen`, { method: 'POST' });
+        toast('درخواست به «در انتظار» برگشت.');
+        location.hash = '#/requests';
+      } catch (err) { toast(err.message, true); }
+    }
   });
+
+  // Inline editor for a pending request: change counts, remove lines, add items (out of stock, swap, extra).
+  let catalog = null;
+  async function openRequestEditor(r) {
+    const row = view.querySelector(`[data-request="${r.id}"]`);
+    catalog ??= await Promise.all([api('/api/admin/items'), api('/api/admin/categories'), api('/api/admin/people')]);
+    const [allItems, allCategories, allPeople] = catalog;
+    const groupId = allPeople.find((p) => p.id === r.personId)?.groupId ?? null;
+    const allowedCategory = new Set(allCategories.filter((c) => !c.personGroupId || c.personGroupId === groupId).map((c) => c.id));
+    const choices = allItems.filter((i) => i.isActive && (i.categoryId == null || allowedCategory.has(i.categoryId)));
+    const lines = new Map(r.lines.map((l) => [l.itemId, { name: l.itemName, qty: l.quantity }]));
+
+    const editor = document.createElement('div');
+    editor.className = 'req-editor';
+    const render = () => {
+      editor.innerHTML = `
+        ${[...lines].map(([id, l]) => `
+          <div class="req-edit-line">
+            <span class="n">${esc(l.name)}</span>
+            <div class="stepper">
+              <button type="button" data-ed-step="${id}:-1" aria-label="کم کردن">−</button>
+              <span class="qty">${fa(l.qty)}</span>
+              <button type="button" data-ed-step="${id}:1" aria-label="اضافه کردن">+</button>
+            </div>
+            <button type="button" class="btn link danger small" data-ed-remove="${id}" title="حذف این قلم">✕</button>
+          </div>`).join('') || '<div class="muted">هیچ قلمی نمانده؛ یک قلم اضافه کنید یا درخواست را رد کنید.</div>'}
+        <div class="inline-form" style="margin-top:8px">
+          <select data-ed-add>
+            <option value="">➕ افزودن قلم…</option>
+            ${choices.filter((i) => !lines.has(i.id)).map((i) => `<option value="${i.id}">${esc(i.name)}${i.category ? ` (${esc(i.category)})` : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="row-end" style="margin-top:10px">
+          <button type="button" class="btn ghost small" data-ed-cancel>انصراف</button>
+          <button type="button" class="btn ghost small" data-ed-save>ذخیره</button>
+          <button type="button" class="btn small" data-ed-save-accept>ذخیره و ثبت سفارش</button>
+        </div>`;
+    };
+    render();
+    row.querySelector('.req-lines').replaceChildren(editor);
+    row.querySelector('.actions').hidden = true;
+
+    const save = async (accept) => {
+      const body = { lines: [...lines].map(([itemId, l]) => ({ itemId, quantity: l.qty })) };
+      await api(`/api/admin/requests/${r.id}`, { method: 'PUT', body });
+      if (accept) {
+        const res = await api(`/api/admin/requests/${r.id}/accept`, { method: 'POST' });
+        toast(`ثبت شد: ${res.personName} — ${fa(res.total)} تومان`);
+      } else toast('درخواست ویرایش شد.');
+      route();
+    };
+    editor.onclick = async (e) => {
+      const step = e.target.closest('[data-ed-step]');
+      if (step) {
+        const [id, d] = step.dataset.edStep.split(':').map(Number);
+        const l = lines.get(id);
+        l.qty = Math.max(1, Math.min(10, l.qty + d));
+        return render();
+      }
+      const remove = e.target.closest('[data-ed-remove]');
+      if (remove) { lines.delete(Number(remove.dataset.edRemove)); return render(); }
+      if (e.target.closest('[data-ed-cancel]')) return route();
+      const saveBtn = e.target.closest('[data-ed-save], [data-ed-save-accept]');
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        try { await save('edSaveAccept' in saveBtn.dataset); }
+        catch (err) { toast(err.message, true); saveBtn.disabled = false; }
+      }
+    };
+    editor.onchange = (e) => {
+      if (!e.target.matches('[data-ed-add]') || !e.target.value) return;
+      const item = choices.find((i) => i.id === Number(e.target.value));
+      lines.set(item.id, { name: item.name, qty: 1 });
+      render();
+    };
+  }
 
   renderPushCard(alive, { hideWhenOn: true });
 }
+
+/** "✏️ ویرایش‌شده" when the manager changed a request's lines. */
+const editedBadge = (r) => (r.editedAt
+  ? `<span class="badge warn" title="${fmtDT(r.editedAt)}">✏️ ویرایش‌شده${r.editedBy ? ` توسط ${esc(r.editedBy)}` : ''}</span>` : '');
 
 // ---------- push notifications (admin device) ----------
 const pushSupported = () => window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;

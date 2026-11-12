@@ -283,7 +283,13 @@ public static class AdminEndpoints
             var person = await db.People.FindAsync(req.PersonId);
             if (person == null) return ApiErrors.Bad("شخص انتخاب‌شده معتبر نیست.");
             if (req.Amount <= 0) return ApiErrors.Bad("مبلغ پرداخت باید بیشتر از صفر باشد.");
-            var payment = new Payment { PersonId = person.Id, Amount = req.Amount, Note = Clip(req.Note), CreatedBy = ctx.User.Identity!.Name! };
+            if (req.PaymentCardId is { } cardId && !await db.PaymentCards.AnyAsync(c => c.Id == cardId))
+                return ApiErrors.Bad("کارت انتخاب‌شده وجود ندارد.");
+            var payment = new Payment
+            {
+                PersonId = person.Id, Amount = req.Amount, PaymentCardId = req.PaymentCardId, Note = Clip(req.Note),
+                CreatedBy = ctx.User.Identity!.Name!,
+            };
             db.Payments.Add(payment);
             await db.SaveChangesAsync();
             return Results.Ok(new { payment.Id });

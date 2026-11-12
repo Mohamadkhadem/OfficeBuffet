@@ -197,6 +197,29 @@ a.list-row:hover { background: var(--surface-2); }
 .menu-section.closed .stepper button { cursor: not-allowed; }
 .cat-title .badge { margin-inline-start: 6px; vertical-align: middle; }
 
+/* Payments page: person picker with balances, balance by card, settlement drive */
+.pay-people { max-height: 260px; overflow: auto; }
+.pay-people .person-btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.pay-people .person-btn.current { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.debt { color: var(--danger); font-weight: 700; }
+.credit { color: var(--success); font-weight: 700; }
+.who-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.who-head .who { font-size: 18px; font-weight: 800; }
+.pay-card-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+.pay-card.static { cursor: default; grid-template-areas: "t" "n"; grid-template-columns: 1fr; }
+.pay-card.static:hover { border-color: var(--border); }
+.card-balance { display: grid; justify-items: end; gap: 2px; font-size: 14px; white-space: nowrap; }
+.drive-card.on { border: 2px solid var(--warn); background: var(--warn-soft); }
+.debtors { display: flex; flex-wrap: wrap; gap: 6px; }
+.drive-banner { border: 2px solid var(--warn); background: var(--warn-soft); }
+.drive-banner.blocked { border-color: var(--danger); background: var(--danger-soft); }
+.drive-banner p { margin: 6px 0 0; line-height: 1.8; }
+
+/* Inline editor for a pending request (manager) */
+.req-editor { display: grid; gap: 6px; margin: 6px 0; padding: 10px; border: 1px dashed var(--primary); border-radius: 12px; }
+.req-edit-line { display: flex; align-items: center; gap: 10px; }
+.req-edit-line .n { flex: 1; font-weight: 700; }
+
 .inline-form { display: flex; gap: 8px; flex-wrap: wrap; }
 .inline-form input { flex: 1; min-width: 180px; }
 .version-line { text-align: center; font-size: 12px; margin: 16px 0 0; }

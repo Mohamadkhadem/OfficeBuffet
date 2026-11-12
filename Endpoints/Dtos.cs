@@ -7,12 +7,13 @@ public record UserRequest(string Username, string Password);
 public record ItemRequest(string Name, int? CategoryId, long Price, bool IsActive = true);
 public record PersonRequest(string Name, string? NationalCode, bool IsActive = true, int? GroupId = null);
 /// <param name="StartTime">"07:00"; leave both times empty for a category that is always open.</param>
-public record MenuCategoryRequest(string? Name, string? StartTime, string? EndTime, int? PersonGroupId);
+public record MenuCategoryRequest(string? Name, string? StartTime, string? EndTime, int? PersonGroupId, int? PaymentCardId = null);
 public record PersonGroupRequest(string? Name);
 public record MoveRequest(int Direction);
 public record OrderLine(int ItemId, int Quantity);
 public record OrderRequest(int PersonId, List<OrderLine> Lines, string? Note, string? Date = null);
-public record PaymentRequest(int PersonId, long Amount, string? Note);
+public record PaymentRequest(int PersonId, long Amount, string? Note, int? PaymentCardId = null);
+public record EditRequestLines(List<OrderLine> Lines);
 public record SettlementRequest(int PersonId, string Until, string UntilLabel, string? Note);
 public record VoidRequest(string? Reason);
 /// <param name="Force">Save even if the number fails the Luhn check (the admin confirmed it is right).</param>

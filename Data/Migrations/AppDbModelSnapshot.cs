@@ -90,6 +90,9 @@ namespace OfficeBuffet.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PaymentCardId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("PersonGroupId")
                         .HasColumnType("INTEGER");
 
@@ -103,6 +106,8 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.HasIndex("Name")
                         .IsUnique();
+
+                    b.HasIndex("PaymentCardId");
 
                     b.HasIndex("PersonGroupId");
 
@@ -135,6 +140,9 @@ namespace OfficeBuffet.Data.Migrations
                     b.Property<string>("Note")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PantryRequestId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("PersonId")
                         .HasColumnType("INTEGER");
 
@@ -160,6 +168,8 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("PantryRequestId");
+
                     b.HasIndex("PersonId");
 
                     b.ToTable("Orders");
@@ -172,6 +182,12 @@ namespace OfficeBuffet.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EditedBy")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("HandledAt")
@@ -253,6 +269,9 @@ namespace OfficeBuffet.Data.Migrations
                     b.Property<string>("Note")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PaymentCardId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("PersonId")
                         .HasColumnType("INTEGER");
 
@@ -268,6 +287,8 @@ namespace OfficeBuffet.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt");
+
+                    b.HasIndex("PaymentCardId");
 
                     b.HasIndex("PersonId");
 
@@ -440,6 +461,30 @@ namespace OfficeBuffet.Data.Migrations
                     b.ToTable("Settlements");
                 });
 
+            modelBuilder.Entity("OfficeBuffet.Data.SettlementDrive", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EndedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StartedBy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SettlementDrives");
+                });
+
             modelBuilder.Entity("OfficeBuffet.Data.Item", b =>
                 {
                     b.HasOne("OfficeBuffet.Data.MenuCategory", "Category")
@@ -452,10 +497,17 @@ namespace OfficeBuffet.Data.Migrations
 
             modelBuilder.Entity("OfficeBuffet.Data.MenuCategory", b =>
                 {
+                    b.HasOne("OfficeBuffet.Data.PaymentCard", "PaymentCard")
+                        .WithMany()
+                        .HasForeignKey("PaymentCardId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("OfficeBuffet.Data.PersonGroup", "PersonGroup")
                         .WithMany()
                         .HasForeignKey("PersonGroupId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("PaymentCard");
 
                     b.Navigation("PersonGroup");
                 });
@@ -493,11 +545,18 @@ namespace OfficeBuffet.Data.Migrations
 
             modelBuilder.Entity("OfficeBuffet.Data.Payment", b =>
                 {
+                    b.HasOne("OfficeBuffet.Data.PaymentCard", "PaymentCard")
+                        .WithMany()
+                        .HasForeignKey("PaymentCardId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("OfficeBuffet.Data.Person", "Person")
                         .WithMany()
                         .HasForeignKey("PersonId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("PaymentCard");
 
                     b.Navigation("Person");
                 });

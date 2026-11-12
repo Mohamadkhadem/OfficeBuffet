@@ -43,6 +43,10 @@ public sealed class WebPush
     public Task<(int Sent, int Failed)> NotifyAdmins(object message, int? adminUserId = null) =>
         Notify(message, s => s.AdminUserId != null && (adminUserId == null || s.AdminUserId == adminUserId));
 
+    /// <summary>Sends to every employee device (e.g. the start of a settlement drive).</summary>
+    public Task<(int Sent, int Failed)> NotifyAllPeople(object message) =>
+        Notify(message, s => s.PersonId != null);
+
     /// <summary>Sends to the devices where this employee turned notifications on.</summary>
     public Task<(int Sent, int Failed)> NotifyPerson(int personId, object message) =>
         Notify(message, s => s.PersonId == personId);

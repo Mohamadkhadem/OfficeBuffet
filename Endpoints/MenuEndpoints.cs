@@ -30,6 +30,7 @@ public static class MenuEndpoints
         c.Id, c.Name, c.SortOrder,
         startTime = Hhmm(c.StartTime), endTime = Hhmm(c.EndTime),
         c.PersonGroupId, personGroup = c.PersonGroup?.Name,
+        c.PaymentCardId, paymentCard = c.PaymentCard?.Title,
         itemCount, open = c.IsOpenAt(Now()),
     };
 
@@ -43,7 +44,8 @@ public static class MenuEndpoints
         {
             var counts = await db.Items.Where(i => i.CategoryId != null).GroupBy(i => i.CategoryId)
                 .Select(x => new { Id = x.Key!.Value, Count = x.Count() }).ToDictionaryAsync(x => x.Id, x => x.Count);
-            var list = await db.MenuCategories.Include(c => c.PersonGroup).OrderBy(c => c.SortOrder).ThenBy(c => c.Id).ToListAsync();
+            var list = await db.MenuCategories.Include(c => c.PersonGroup).Include(c => c.PaymentCard)
+                .OrderBy(c => c.SortOrder).ThenBy(c => c.Id).ToListAsync();
             return list.Select(c => Dto(c, counts.GetValueOrDefault(c.Id)));
         });
 
@@ -113,11 +115,14 @@ public static class MenuEndpoints
 
         if (req.PersonGroupId is { } groupId && !await db.PersonGroups.AnyAsync(x => x.Id == groupId))
             return "گروه پرسنلی انتخاب‌شده وجود ندارد.";
+        if (req.PaymentCardId is { } cardId && !await db.PaymentCards.AnyAsync(x => x.Id == cardId))
+            return "کارت انتخاب‌شده وجود ندارد.";
 
         category.Name = name;
         category.StartTime = start;
         category.EndTime = end;
         category.PersonGroupId = req.PersonGroupId;
+        category.PaymentCardId = req.PaymentCardId;
         return null;
     }
 

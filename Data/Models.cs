@@ -44,6 +44,9 @@ public class MenuCategory
     public TimeOnly? EndTime { get; set; }
     public int? PersonGroupId { get; set; }
     public PersonGroup? PersonGroup { get; set; }
+    /// <summary>The bank card this category's purchases are paid into; debts are shown per card.</summary>
+    public int? PaymentCardId { get; set; }
+    public PaymentCard? PaymentCard { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public bool IsOpenAt(TimeOnly time) =>
@@ -96,9 +99,24 @@ public class Order
     public string CreatedBy { get; set; } = "";
     /// <summary>When the order was actually typed in, if it was recorded later for an earlier day (from a paper list).</summary>
     public DateTime? EnteredAt { get; set; }
+    /// <summary>The request this order was created from, so accepting can be undone.</summary>
+    public int? PantryRequestId { get; set; }
     public DateTime? VoidedAt { get; set; }
     public string? VoidedBy { get; set; }
     public string? VoidReason { get; set; }
+}
+
+/// <summary>
+/// A period in which the pantry manager asks everyone to pay up: while it is active (not ended), anyone with
+/// an open debt cannot send new requests.
+/// </summary>
+public class SettlementDrive
+{
+    public int Id { get; set; }
+    public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+    public string StartedBy { get; set; } = "";
+    public DateTime? EndedAt { get; set; }
+    public string? EndedBy { get; set; }
 }
 
 /// <summary>
@@ -130,6 +148,9 @@ public class Payment
     public int PersonId { get; set; }
     public Person Person { get; set; } = null!;
     public long Amount { get; set; }
+    /// <summary>The bank card this was paid into; null = general (not tied to a card).</summary>
+    public int? PaymentCardId { get; set; }
+    public PaymentCard? PaymentCard { get; set; }
     public string? Note { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string CreatedBy { get; set; } = "";
@@ -165,6 +186,9 @@ public class PantryRequest
     /// <summary>Last time the employee nudged the admin about this request (re-sends the notification).</summary>
     public DateTime? RemindedAt { get; set; }
     public int RemindCount { get; set; }
+    /// <summary>Set when the admin changed the lines (e.g. an item was out of stock).</summary>
+    public DateTime? EditedAt { get; set; }
+    public string? EditedBy { get; set; }
 }
 
 public class PantryRequestLine

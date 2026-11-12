@@ -86,6 +86,14 @@ which is checked against its check digit. It runs entirely on your own server in
 - **Menu categories with hours and staff groups:** define your own menu sections (breakfast, drinks, …), give a
   section opening hours (colleagues can only request from it in that window; the server enforces it) and/or
   limit it to one staff group. Staff groups are defined on the people page; each person is in one group or none.
+- **Debt per card:** each menu category can be tied to a bank card, so a balance is shown split by card
+  (for example total 10,000 = card A 4,000 + card B 6,000); categories without a card count as "other". A payment
+  can be recorded to a card; a payment without a card pays off card debts in order.
+- **Edit and undo requests:** the manager can change a pending request (fewer/more of an item, remove or add
+  items) before accepting it, and can undo an accepted or rejected request: the orders it created are voided
+  (kept in history) and it goes back to pending.
+- **Settlement drive:** "Start settlement" on the payments page notifies everyone; until "End settlement",
+  anyone with an open debt cannot send any request (free items included). The server enforces it.
 - **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
   appear under each colleague's balance, and tapping a number copies it.
 - Multiple manager accounts, password change, and light and dark themes.
