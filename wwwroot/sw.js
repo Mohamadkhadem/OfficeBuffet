@@ -1,12 +1,17 @@
 // Caches the app shell so the PWA opens instantly and installs; API calls always go to the network.
-const CACHE = 'officebuffet-v23';
+const CACHE = 'officebuffet-v27';
 const SHELL = [
-  '/', '/index.html', '/css/app.css', '/js/app.js', '/js/jalali.js', '/fonts/Vazirmatn.woff2',
+  '/', '/index.html', '/css/app.css', '/js/app.js', '/js/jalali.js', '/js/theme.js', '/fonts/Vazirmatn.woff2',
   '/manifest.webmanifest', '/apple-touch-icon.png', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
 ];
 
+// The browser's HTTP cache may still hold an older copy of a file (older versions of the server sent no
+// Cache-Control for "/"). 'reload' and 'no-cache' make sure a new version is really fetched; otherwise a new
+// app.js could run with an old index.html.
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL.map((path) => new Request(path, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -22,9 +27,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
 
-  // Network first (so updates show up immediately), cached copy when offline.
+  // Network first (so updates show up immediately), cached copy when offline. 'no-cache' revalidates with the
+  // server (a cheap 304 when nothing changed) instead of trusting the browser's HTTP cache.
   event.respondWith(
-    fetch(req)
+    fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

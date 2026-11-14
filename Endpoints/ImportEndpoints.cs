@@ -31,10 +31,13 @@ public static class ImportEndpoints
         g.MapPost("/parse", async (string name, HttpRequest request) =>
         {
             if (request.ContentLength > MaxFileBytes) return ApiErrors.Bad("حجم فایل حداکثر ۵ مگابایت است.");
-            using var buffer = new MemoryStream();
-            await request.Body.CopyToAsync(buffer);
-            if (buffer.Length > MaxFileBytes) return ApiErrors.Bad("حجم فایل حداکثر ۵ مگابایت است.");
-            buffer.Position = 0;
+            // Read at most one byte past the limit, whatever the request claimed about its size.
+            var bytes = new byte[MaxFileBytes + 1];
+            var length = 0;
+            int n;
+            while (length < bytes.Length && (n = await request.Body.ReadAsync(bytes.AsMemory(length))) > 0) length += n;
+            if (length > MaxFileBytes) return ApiErrors.Bad("حجم فایل حداکثر ۵ مگابایت است.");
+            using var buffer = new MemoryStream(bytes, 0, length, writable: false);
             try
             {
                 var rows = Spreadsheet.Read(buffer, name);
@@ -43,7 +46,7 @@ public static class ImportEndpoints
             catch (InvalidDataException e) { return ApiErrors.Bad(e.Message); }
         });
 
-        g.MapPost("/items", async (ImportItemsRequest req, AppDb db) =>
+        g.MapPost("/items", async (ImportItemsRequest req, HttpContext ctx, AppDb db) =>
         {
             var items = await db.Items.Include(i => i.Category).ToListAsync();
             var byName = items.GroupBy(i => Norm(i.Name)).ToDictionary(x => x.Key, x => x.First());
@@ -93,10 +96,10 @@ public static class ImportEndpoints
                     if (req.Apply) db.Items.Add(new Item { Name = name, Category = category, Price = price });
                 }
             }
-            return await Finish(req.Apply, results, db);
+            return await Finish(req.Apply, results, db, ctx);
         });
 
-        g.MapPost("/people", async (ImportPeopleRequest req, AppDb db) =>
+        g.MapPost("/people", async (ImportPeopleRequest req, HttpContext ctx, AppDb db) =>
         {
             var people = await db.People.Include(p => p.Group).ToListAsync();
             var byName = people.GroupBy(p => Norm(p.Name)).ToDictionary(x => x.Key, x => x.First());
@@ -164,13 +167,20 @@ public static class ImportEndpoints
                     if (req.Apply) db.People.Add(new Person { Name = name, NationalCode = code.Length == 0 ? null : code, Group = group });
                 }
             }
-            return await Finish(req.Apply, results, db);
+            return await Finish(req.Apply, results, db, ctx);
         });
     }
 
-    private static async Task<IResult> Finish(bool apply, List<RowResult> results, AppDb db)
+    private static async Task<IResult> Finish(bool apply, List<RowResult> results, AppDb db, HttpContext ctx)
     {
-        if (apply) await db.SaveChangesAsync();
+        if (apply)
+        {
+            // Bulk changes to prices and national codes (logins) go into the security log as one entry.
+            var changed = results.Count(r => r.Changes);
+            if (changed > 0)
+                Audit.Add(db, ctx, ctx.Request.Path.Value!.EndsWith("/people") ? "import.people" : "import.items", $"{changed} ردیف از فایل اعمال شد");
+            await db.SaveChangesAsync();
+        }
         var counts = results.GroupBy(r => r.Status).ToDictionary(x => x.Key, x => x.Count());
         return Results.Ok(new { applied = apply, counts, changes = results.Count(r => r.Changes), rows = results });
     }
@@ -209,7 +219,7 @@ public static class ImportEndpoints
             _ => c,
         }).Where(c => c is not (',' or '٬' or '،' or ' ' or ' ')).ToArray());
         if (decimal.TryParse(digits, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var d)
-            && d >= 0 && d == decimal.Truncate(d) && d < 1_000_000_000_000m)
+            && d >= 0 && d == decimal.Truncate(d) && d <= AdminEndpoints.MaxAmount)
         {
             price = (long)d;
             return true;

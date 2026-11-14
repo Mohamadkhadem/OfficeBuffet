@@ -64,6 +64,24 @@ public static class Balances
     public static async Task<long> Total(AppDb db, int personId) =>
         (await ByCard(db, personId)).GetValueOrDefault(personId)?.Values.Sum() ?? 0;
 
+    /// <summary>
+    /// What each person still owes for the drive: purchases up to the drive's cutoff, minus every payment so far
+    /// (a payment made during the drive pays the old debt first). Only people who owe something appear.
+    /// Orders after the cutoff are left out, so someone who has paid can keep ordering.
+    /// </summary>
+    public static async Task<Dictionary<int, long>> DueForDrive(AppDb db, SettlementDrive drive, int? personId = null)
+    {
+        var cutoff = drive.Until ?? drive.StartedAt;
+        var consumed = await db.UnsettledOrders(db.Orders.Where(o => o.VoidedAt == null && o.CreatedAt < cutoff && (personId == null || o.PersonId == personId)))
+            .GroupBy(o => o.PersonId).Select(x => new { PersonId = x.Key, Total = x.Sum(o => o.Total) })
+            .ToDictionaryAsync(x => x.PersonId, x => x.Total);
+        var paid = await db.UnsettledPayments(db.Payments.Where(p => p.VoidedAt == null && (personId == null || p.PersonId == personId)))
+            .GroupBy(p => p.PersonId).Select(x => new { PersonId = x.Key, Total = x.Sum(p => p.Amount) })
+            .ToDictionaryAsync(x => x.PersonId, x => x.Total);
+        return consumed.Select(x => (x.Key, Due: x.Value - paid.GetValueOrDefault(x.Key)))
+            .Where(x => x.Due > 0).ToDictionary(x => x.Key, x => x.Due);
+    }
+
     /// <summary>The settlement drive in progress, if the pantry manager started one and has not ended it.</summary>
     public static Task<SettlementDrive?> ActiveDrive(AppDb db) =>
         db.SettlementDrives.Where(d => d.EndedAt == null).OrderByDescending(d => d.Id).FirstOrDefaultAsync();

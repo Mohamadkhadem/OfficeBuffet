@@ -14,6 +14,7 @@ public record OrderLine(int ItemId, int Quantity);
 public record OrderRequest(int PersonId, List<OrderLine> Lines, string? Note, string? Date = null);
 public record PaymentRequest(int PersonId, long Amount, string? Note, int? PaymentCardId = null);
 public record EditRequestLines(List<OrderLine> Lines);
+public record DriveStartRequest(string? Until, string? UntilLabel);
 public record SettlementRequest(int PersonId, string Until, string UntilLabel, string? Note);
 public record VoidRequest(string? Reason);
 /// <param name="Force">Save even if the number fails the Luhn check (the admin confirmed it is right).</param>
@@ -32,4 +33,25 @@ public static class ApiErrors
     public static IResult Bad(string message) => Results.BadRequest(new { error = message });
     public static IResult Conflict(string message) => Results.Conflict(new { error = message });
     public static IResult NotFound(string message) => Results.NotFound(new { error = message });
+}
+
+public static class SaveExtensions
+{
+    /// <summary>
+    /// SaveChanges that returns false (and saves nothing) when a concurrency-token column was changed by another
+    /// request in between, e.g. two clicks on "approve" for the same receipt.
+    /// </summary>
+    public static async Task<bool> SaveIfUnchanged(this OfficeBuffet.Data.AppDb db)
+    {
+        try
+        {
+            await db.SaveChangesAsync();
+            return true;
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            return false;
+        }
+    }
 }

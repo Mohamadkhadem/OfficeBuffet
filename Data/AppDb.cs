@@ -17,6 +17,8 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<MenuCategory> MenuCategories => Set<MenuCategory>();
     public DbSet<PersonGroup> PersonGroups => Set<PersonGroup>();
     public DbSet<SettlementDrive> SettlementDrives => Set<SettlementDrive>();
+    public DbSet<PaymentClaim> PaymentClaims => Set<PaymentClaim>();
+    public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -55,6 +57,27 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         b.Entity<PantryRequest>().HasIndex(x => x.PersonId);
         b.Entity<PantryRequest>().HasOne(x => x.Person).WithMany().OnDelete(DeleteBehavior.Restrict);
         b.Entity<PantryRequest>().HasMany(x => x.Lines).WithOne().HasForeignKey(x => x.PantryRequestId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<PaymentClaim>().HasIndex(x => new { x.Status, x.CreatedAt });
+        b.Entity<PaymentClaim>().HasIndex(x => x.PersonId);
+        b.Entity<PaymentClaim>().HasIndex(x => x.PaymentId);
+        b.Entity<PaymentClaim>().HasOne(x => x.Person).WithMany().OnDelete(DeleteBehavior.Restrict);
+        b.Entity<PaymentClaim>().HasOne(x => x.PaymentCard).WithMany().OnDelete(DeleteBehavior.SetNull);
+        b.Entity<PaymentClaim>().HasOne(x => x.Payment).WithMany().OnDelete(DeleteBehavior.SetNull);
+        b.Entity<PaymentClaim>().Property(x => x.ReceiptFile).HasMaxLength(200);
+        b.Entity<PaymentClaim>().Property(x => x.ReceiptContentType).HasMaxLength(40);
+        b.Entity<PaymentClaim>().Property(x => x.ReceiptSha256).HasMaxLength(64);
+        b.Entity<PaymentClaim>().HasIndex(x => x.ReceiptSha256);
+        // Approving/rejecting/accepting only succeeds if nobody changed the status in between
+        // (UPDATE … WHERE Status = @old), so a double click can never record a payment or an order twice.
+        b.Entity<PaymentClaim>().Property(x => x.Status).IsConcurrencyToken();
+        b.Entity<PantryRequest>().Property(x => x.Status).IsConcurrencyToken();
+        b.Entity<AdminUser>().Property(x => x.SecurityStamp).HasMaxLength(64);
+        b.Entity<AuditEntry>().ToTable("AuditLog");
+        b.Entity<AuditEntry>().HasIndex(x => x.At);
+        b.Entity<AuditEntry>().Property(x => x.Actor).HasMaxLength(100);
+        b.Entity<AuditEntry>().Property(x => x.Action).HasMaxLength(50);
+        b.Entity<AuditEntry>().Property(x => x.Details).HasMaxLength(500);
+        b.Entity<AuditEntry>().Property(x => x.Ip).HasMaxLength(64);
         b.Entity<PushSubscription>().HasIndex(x => x.Endpoint).IsUnique();
         b.Entity<PushSubscription>().HasOne(x => x.AdminUser).WithMany().OnDelete(DeleteBehavior.Cascade);
         b.Entity<PushSubscription>().HasOne(x => x.Person).WithMany().OnDelete(DeleteBehavior.Cascade);

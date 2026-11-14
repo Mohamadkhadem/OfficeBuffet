@@ -10,6 +10,10 @@ namespace OfficeBuffet.Endpoints;
 public static class AdminEndpoints
 {
     private const int MaxQuantity = 50;
+    private const int MaxOrderLines = 30;
+    /// <summary>Upper bound for a price or a single payment (one billion toman); keeps every sum far from overflowing.</summary>
+    public const long MaxAmount = 1_000_000_000;
+    private const int AuditPageSize = 200;
     private const int MaxBackdateDays = 60;
     private const int MaxNoteLength = 200;
 
@@ -23,37 +27,47 @@ public static class AdminEndpoints
         MapSettlements(g);
         MapUsers(g);
         MapCards(g);
+
+        // The security log (read-only; nothing can change or delete it). Newest first; "before" pages back.
+        g.MapGet("/audit", async (long? before, AppDb db) =>
+            await db.AuditLog.Where(a => before == null || a.Id < before).OrderByDescending(a => a.Id).Take(AuditPageSize)
+                .Select(a => new { a.Id, a.At, a.Actor, a.Action, a.Details, a.Ip }).ToListAsync());
     }
 
     private static void MapCards(RouteGroupBuilder g)
     {
         g.MapGet("/cards", async (AppDb db) => await db.PaymentCards.OrderBy(c => c.Id).ToListAsync());
 
-        g.MapPost("/cards", async (PaymentCardRequest req, AppDb db) =>
+        // Card changes decide where everyone's money goes, so each one is in the security log.
+        g.MapPost("/cards", async (PaymentCardRequest req, HttpContext ctx, AppDb db) =>
         {
             var (card, error) = await ValidateCard(req, null, db);
             if (error != null) return error == CheckDigitFailed ? CheckDigitResult() : ApiErrors.Bad(error);
             db.PaymentCards.Add(card!);
+            Audit.Add(db, ctx, "card.create", $"«{card!.Title}» {Audit.MaskCard(card.Number)}");
             await db.SaveChangesAsync();
             return Results.Ok(card);
         });
 
-        g.MapPut("/cards/{id:int}", async (int id, PaymentCardRequest req, AppDb db) =>
+        g.MapPut("/cards/{id:int}", async (int id, PaymentCardRequest req, HttpContext ctx, AppDb db) =>
         {
             var card = await db.PaymentCards.FindAsync(id);
             if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
             var (valid, error) = await ValidateCard(req, id, db);
             if (error != null) return error == CheckDigitFailed ? CheckDigitResult() : ApiErrors.Bad(error);
-            card.Title = valid!.Title;
+            if (card.Title != valid!.Title || card.Number != valid.Number)
+                Audit.Add(db, ctx, "card.update", $"«{card.Title}» {Audit.MaskCard(card.Number)} ← «{valid.Title}» {Audit.MaskCard(valid.Number)}");
+            card.Title = valid.Title;
             card.Number = valid.Number;
             await db.SaveChangesAsync();
             return Results.Ok(card);
         });
 
-        g.MapDelete("/cards/{id:int}", async (int id, AppDb db) =>
+        g.MapDelete("/cards/{id:int}", async (int id, HttpContext ctx, AppDb db) =>
         {
             var card = await db.PaymentCards.FindAsync(id);
             if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
+            Audit.Add(db, ctx, "card.delete", $"«{card.Title}» {Audit.MaskCard(card.Number)}");
             db.PaymentCards.Remove(card);
             await db.SaveChangesAsync();
             return Results.Ok();
@@ -109,12 +123,13 @@ public static class AdminEndpoints
             return Results.Ok(new { item.Id });
         });
 
-        g.MapPut("/items/{id:int}", async (int id, ItemRequest req, AppDb db) =>
+        g.MapPut("/items/{id:int}", async (int id, ItemRequest req, HttpContext ctx, AppDb db) =>
         {
             var item = await db.Items.FindAsync(id);
             if (item == null) return ApiErrors.NotFound("کالا پیدا نشد.");
             var error = await ValidateItem(req, id, db);
             if (error != null) return ApiErrors.Bad(error);
+            if (item.Price != req.Price) Audit.Add(db, ctx, "item.price", $"«{item.Name}»: {item.Price:N0} ← {req.Price:N0}");
             item.Name = req.Name.Trim();
             item.CategoryId = req.CategoryId;
             item.Price = req.Price;
@@ -140,6 +155,8 @@ public static class AdminEndpoints
         var name = (req.Name ?? "").Trim();
         if (name.Length == 0) return "نام کالا را وارد کنید.";
         if (req.Price < 0) return "قیمت نمی‌تواند منفی باشد.";
+        if (req.Price > MaxAmount) return "قیمت بیش از حد بزرگ است.";
+        if (name.Length > 80) return "نام کالا حداکثر ۸۰ حرف است.";
         if (await db.Items.AnyAsync(i => i.Name == name && i.Id != id)) return "کالایی با این نام وجود دارد.";
         if (req.CategoryId is { } categoryId && !await db.MenuCategories.AnyAsync(c => c.Id == categoryId))
             return "دسته‌ی انتخاب‌شده وجود ندارد.";
@@ -160,12 +177,18 @@ public static class AdminEndpoints
             return Results.Ok(person);
         });
 
-        g.MapPut("/people/{id:int}", async (int id, PersonRequest req, AppDb db) =>
+        g.MapPut("/people/{id:int}", async (int id, PersonRequest req, HttpContext ctx, AppDb db) =>
         {
             var person = await db.People.FindAsync(id);
             if (person == null) return ApiErrors.NotFound("شخص پیدا نشد.");
             var error = await ValidatePerson(req, id, db);
             if (error != null) return ApiErrors.Bad(error);
+            // The national code is this person's login; changing it (or reactivating) is a security event.
+            var code = NormalizedCode(req);
+            if (code != person.NationalCode)
+                Audit.Add(db, ctx, "person.code", $"«{person.Name}»: {CodeOrDash(person.NationalCode)} ← {CodeOrDash(code)}");
+            if (req.IsActive != person.IsActive)
+                Audit.Add(db, ctx, req.IsActive ? "person.activate" : "person.deactivate", $"«{person.Name}»");
             person.Name = req.Name.Trim();
             person.NationalCode = NormalizedCode(req);
             person.IsActive = req.IsActive;
@@ -179,7 +202,8 @@ public static class AdminEndpoints
             var person = await db.People.FindAsync(id);
             if (person == null) return ApiErrors.NotFound("شخص پیدا نشد.");
             if (await db.Orders.AnyAsync(o => o.PersonId == id) || await db.Payments.AnyAsync(p => p.PersonId == id)
-                || await db.Settlements.AnyAsync(s => s.PersonId == id) || await db.Requests.AnyAsync(r => r.PersonId == id))
+                || await db.Settlements.AnyAsync(s => s.PersonId == id) || await db.Requests.AnyAsync(r => r.PersonId == id)
+                || await db.PaymentClaims.AnyAsync(c => c.PersonId == id))
                 return ApiErrors.Conflict("این شخص سابقه‌ی سفارش یا پرداخت دارد و قابل حذف نیست؛ به‌جای حذف، غیرفعالش کنید.");
             db.People.Remove(person);
             await db.SaveChangesAsync();
@@ -191,6 +215,7 @@ public static class AdminEndpoints
     {
         var name = (req.Name ?? "").Trim();
         if (name.Length == 0) return "نام شخص را وارد کنید.";
+        if (name.Length > 80) return "نام شخص حداکثر ۸۰ حرف است.";
         if (await db.People.AnyAsync(p => p.Name == name && p.Id != id)) return "شخصی با این نام وجود دارد.";
         if (req.GroupId is { } groupId && !await db.PersonGroups.AnyAsync(x => x.Id == groupId))
             return "گروه انتخاب‌شده وجود ندارد.";
@@ -204,6 +229,8 @@ public static class AdminEndpoints
         return null;
     }
 
+    private static string CodeOrDash(string? code) => string.IsNullOrEmpty(code) ? "—" : Audit.MaskCode(code);
+
     private static string? NormalizedCode(PersonRequest req)
     {
         var code = NationalCode.Normalize(req.NationalCode);
@@ -216,8 +243,10 @@ public static class AdminEndpoints
         {
             var person = await db.People.FindAsync(req.PersonId);
             if (person == null || !person.IsActive) return ApiErrors.Bad("شخص انتخاب‌شده معتبر نیست.");
-            var lines = (req.Lines ?? []).Where(l => l.Quantity > 0).ToList();
+            var lines = (req.Lines ?? []).Where(l => l.Quantity > 0)
+                .GroupBy(l => l.ItemId).Select(x => new OrderLine(x.Key, x.Sum(l => Math.Min(l.Quantity, MaxQuantity + 1)))).ToList();
             if (lines.Count == 0) return ApiErrors.Bad("حداقل یک قلم انتخاب کنید.");
+            if (lines.Count > MaxOrderLines) return ApiErrors.Bad($"حداکثر {MaxOrderLines} قلم در هر ثبت.");
             if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
 
             var itemIds = lines.Select(l => l.ItemId).Distinct().ToList();
@@ -283,6 +312,7 @@ public static class AdminEndpoints
             var person = await db.People.FindAsync(req.PersonId);
             if (person == null) return ApiErrors.Bad("شخص انتخاب‌شده معتبر نیست.");
             if (req.Amount <= 0) return ApiErrors.Bad("مبلغ پرداخت باید بیشتر از صفر باشد.");
+            if (req.Amount > MaxAmount) return ApiErrors.Bad("مبلغ پرداخت بیش از حد بزرگ است.");
             if (req.PaymentCardId is { } cardId && !await db.PaymentCards.AnyAsync(c => c.Id == cardId))
                 return ApiErrors.Bad("کارت انتخاب‌شده وجود ندارد.");
             var payment = new Payment
@@ -382,14 +412,15 @@ public static class AdminEndpoints
         g.MapGet("/users", async (AppDb db) =>
             await db.AdminUsers.OrderBy(u => u.Id).Select(u => new { u.Id, u.Username, u.CreatedAt }).ToListAsync());
 
-        g.MapPost("/users", async (UserRequest req, AppDb db) =>
+        g.MapPost("/users", async (UserRequest req, HttpContext ctx, AppDb db) =>
         {
             var error = AuthEndpoints.ValidateCredentials(req.Username, req.Password);
             if (error != null) return ApiErrors.Bad(error);
             var username = req.Username.Trim();
             if (await db.AdminUsers.AnyAsync(u => u.Username == username)) return ApiErrors.Bad("این نام کاربری وجود دارد.");
-            var user = new AdminUser { Username = username, PasswordHash = Passwords.Hash(req.Password) };
+            var user = new AdminUser { Username = username, PasswordHash = Passwords.Hash(req.Password), SecurityStamp = Passwords.NewStamp() };
             db.AdminUsers.Add(user);
+            Audit.Add(db, ctx, "admin.user_create", $"حساب مسئول جدید: {username}");
             await db.SaveChangesAsync();
             return Results.Ok(new { user.Id, user.Username, user.CreatedAt });
         });
@@ -399,6 +430,7 @@ public static class AdminEndpoints
             var user = await db.AdminUsers.FindAsync(id);
             if (user == null) return ApiErrors.NotFound("کاربر پیدا نشد.");
             if (user.Username == ctx.User.Identity!.Name) return ApiErrors.Bad("نمی‌توانید حساب خودتان را حذف کنید.");
+            Audit.Add(db, ctx, "admin.user_delete", $"حساب مسئول حذف شد: {user.Username}");
             db.AdminUsers.Remove(user);
             await db.SaveChangesAsync();
             return Results.Ok();

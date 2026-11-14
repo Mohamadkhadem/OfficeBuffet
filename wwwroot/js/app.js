@@ -13,21 +13,36 @@ function save(key, value) { try { localStorage.setItem('officebuffet.' + key, va
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fa = (n) => Number(n || 0).toLocaleString('fa-IR');
-const money = (n) => `${fa(n)} <small>تومان</small>`;
+const money = (n) => `${fa(n)} <small class="money-unit">تومان</small>`;
 const priceHtml = (p) => (p > 0 ? money(p) : '<span class="badge credit">رایگان</span>');
 const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
 const byName = (a, b) => a.name.localeCompare(b.name, 'fa');
 const isWide = () => matchMedia('(min-width: 900px)').matches;
 
-const dateTimeFmt = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-const monthFmt = new Intl.DateTimeFormat('fa-IR', { month: 'long' });
-const fmtDT = (iso) => dateTimeFmt.format(new Date(iso));
+/** Icon from the sprite in index.html, e.g. ic('pencil') or ic('clock', 'sm'). */
+const ic = (name, cls = '') => `<svg class="i${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+/** A details line ("Ali | 21 Aban, 11:21 | by manager"); empty parts are skipped. */
+const metaHtml = (parts, cls = 'sub') => `<div class="${cls} meta">${parts.filter(Boolean).map((p) => `<span>${p}</span>`).join('')}</div>`;
+/** Empty list: an icon for what would be here, and one line on what to do. */
+const emptyHtml = (icon, text) => `<div class="empty"><span class="em-icon">${ic(icon)}</span><div>${text}</div></div>`;
 
 const toLatinDigits = (s) => String(s ?? '')
   .replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
   .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
 const faDigits = (s) => String(s).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const pad2 = (n) => String(n).padStart(2, '0');
+
+const monthFmt = new Intl.DateTimeFormat('fa-IR', { month: 'long' });
+const JALALI_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+/** "۲۱ آبان، ۱۱:۲۱" this year, "۱۴۰۴/۱۲/۰۵، ۱۱:۲۱" for other years. */
+function fmtDT(iso) {
+  const d = new Date(iso);
+  const j = toJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  const now = new Date();
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const sameYear = toJalali(now.getFullYear(), now.getMonth() + 1, now.getDate()).jy === j.jy;
+  return faDigits(sameYear ? `${j.jd} ${JALALI_MONTHS[j.jm - 1]}، ${time}` : `${j.jy}/${pad2(j.jm)}/${pad2(j.jd)}، ${time}`);
+}
 
 /** Today's Jalali date as "1405/08/05", optionally shifted by whole days. */
 function jalaliLabel(offsetDays = 0) {
@@ -49,6 +64,22 @@ function parseJalali(text) {
   return { label: `${jy}/${pad2(jm)}/${pad2(jd)}`, date: new Date(g.gy, g.gm - 1, g.gd) };
 }
 
+/** The last day of the previous Jalali month, as "1405/07/30". */
+function lastMonthEndLabel() {
+  const j = parseJalali(jalaliLabel());
+  const d = new Date(j.date);
+  d.setDate(d.getDate() - Number(j.label.slice(8)));
+  const r = toJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  return `${r.jy}/${pad2(r.jm)}/${pad2(r.jd)}`;
+}
+
+/** The moment a Jalali day ends (start of the next day, device time) as an ISO string, for "up to and including" cutoffs. */
+function endOfJalaliDay(j) {
+  const d = new Date(j.date);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
 function parseAmount(s) {
   const t = toLatinDigits(s).replace(/[,،٬\s]/g, '');
   return /^\d+$/.test(t) ? Number(t) : NaN;
@@ -63,23 +94,38 @@ function toast(message, isError = false) {
   toastTimer = setTimeout(() => (el.className = ''), isError ? 4500 : 2500);
 }
 
-/** Small modal asking for a line of text. Resolves to the text, or null when cancelled. */
-function askText({ title, text = '', placeholder = '', okText = 'تأیید' }) {
+/** Fills the app's dialog and opens it; resolves with the dialog once it closes. */
+function openDialog({ title, text = '', okText, danger = true, input = null }) {
   const dlg = $('#dialog');
-  const input = $('#dialog-input');
+  const field = $('#dialog-input');
   $('#dialog-title').textContent = title;
-  $('#dialog-text').textContent = text;
+  $('#dialog-text').textContent = faDigits(text);
   $('#dialog-ok').textContent = okText;
-  input.value = '';
-  input.placeholder = placeholder;
-  input.required = true;
+  $('#dialog-ok').className = danger ? 'btn danger' : 'btn';
+  field.hidden = !input;
+  field.required = !!input;
+  field.value = '';
+  field.placeholder = input?.placeholder ?? '';
   dlg.returnValue = '';
   $('#dialog-cancel').onclick = () => dlg.close('cancel');
   return new Promise((resolve) => {
-    dlg.onclose = () => resolve(dlg.returnValue === 'ok' && input.value.trim() ? input.value.trim() : null);
+    dlg.onclose = () => resolve(dlg);
     dlg.showModal();
-    input.focus();
+    (input ? field : $('#dialog-cancel')).focus();
   });
+}
+
+/** Small modal asking for a line of text. Resolves to the text, or null when cancelled. */
+async function askText({ title, text = '', placeholder = '', okText = 'تأیید' }) {
+  const dlg = await openDialog({ title, text, okText, input: { placeholder } });
+  const value = $('#dialog-input').value.trim();
+  return dlg.returnValue === 'ok' && value ? value : null;
+}
+
+/** Yes/no question in the app's own dialog (instead of the browser's confirm). The OK button names the action. */
+async function askConfirm({ title, text = '', okText, danger = true }) {
+  const dlg = await openDialog({ title, text, okText, danger });
+  return dlg.returnValue === 'ok';
 }
 
 async function api(path, { method = 'GET', body } = {}) {
@@ -89,8 +135,13 @@ async function api(path, { method = 'GET', body } = {}) {
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: body ? { 'Content-Type': isFile ? 'application/octet-stream' : 'application/json' } : {},
-      body: body ? (isFile ? body : JSON.stringify(body)) : undefined,
+      // FormData (a receipt photo with its fields) sets its own multipart content type.
+      // X-Buffet tells the server the call comes from this app's own page (protection against cross-site forms).
+      headers: {
+        'X-Buffet': '1',
+        ...(body && !(body instanceof FormData) ? { 'Content-Type': isFile ? 'application/octet-stream' : 'application/json' } : {}),
+      },
+      body: body ? (isFile || body instanceof FormData ? body : JSON.stringify(body)) : undefined,
     });
   } catch {
     throw new Error('ارتباط با سرور برقرار نشد. اتصال شبکه را بررسی کنید.');
@@ -100,8 +151,8 @@ async function api(path, { method = 'GET', body } = {}) {
     location.hash = '#/login';
     throw new Error('نشست شما تمام شده؛ دوباره وارد شوید.');
   }
-  if (res.status === 429) throw new Error('تعداد تلاش‌ها زیاد بود؛ چند دقیقه بعد دوباره امتحان کنید.');
   const data = await res.json().catch(() => null);
+  if (res.status === 429) throw new Error(data?.error || 'تعداد تلاش‌ها زیاد بود؛ چند دقیقه بعد دوباره امتحان کنید.');
   if (!res.ok) throw Object.assign(new Error(data?.error || 'خطایی رخ داد.'), { data });
   return data;
 }
@@ -176,6 +227,34 @@ function balanceBadge(b) {
   if (b < 0) return `<span class="badge credit">بستانکار ${fa(-b)}</span>`;
   return '<span class="badge zero">تسویه</span>';
 }
+/** Same as balanceBadge without the amount, for next to a big number that already shows it. */
+function balanceState(b) {
+  if (b > 0) return '<span class="badge debt lg">بدهکار</span>';
+  if (b < 0) return '<span class="badge credit lg">بستانکار</span>';
+  return '<span class="badge zero lg">تسویه</span>';
+}
+
+/** Menu item with a stepper: "+" first (inline start), then the count, then "−". */
+const itemTileHtml = (i) => `
+  <div class="item-tile" data-item="${i.id}">
+    <div class="name">${esc(i.name)}</div>
+    <div class="price">${priceHtml(i.price)}</div>
+    <div class="stepper">
+      <button type="button" class="plus" data-step="1" aria-label="اضافه کردن">${ic('plus')}</button>
+      <span class="qty">۰</span>
+      <button type="button" data-step="-1" aria-label="کم کردن">${ic('minus')}</button>
+    </div>
+  </div>`;
+
+/** Sticky cart bar under a menu: count and total, "empty the cart", and the main action. */
+const orderBarHtml = (submitText) => `
+  <div class="order-bar">
+    <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
+    <div class="order-actions">
+      <button type="button" class="icon-btn" id="clear-cart" hidden title="خالی کردن سبد" aria-label="خالی کردن سبد">${ic('cart-x')}</button>
+      <button class="btn large" id="submit">${submitText}</button>
+    </div>
+  </div>`;
 
 const stat = (label, value) => `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`;
 
@@ -193,49 +272,49 @@ function entryHtml(e, { showPerson = true, canVoid = false } = {}) {
   if (e.kind === 'settlement') return settlementHtml(e, { showPerson, canVoid });
   const settledBadge = e.settled && !voided ? ' <span class="badge off">تسویه‌شده</span>' : '';
   const title = (isOrder ? `<span class="qty-badge">${fa(e.quantity)}</span>${esc(e.itemName)}` : 'پرداخت') + settledBadge;
-  const sub = [
+  const sub = metaHtml([
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     fmtDT(e.createdAt),
     isOrder && e.quantity > 1 ? `هر عدد ${fa(e.unitPrice)}` : null,
-    !isOrder && e.cardTitle ? `💳 ${esc(e.cardTitle)}` : null,
+    !isOrder && e.cardTitle ? `${ic('card', 'sm')} ${esc(e.cardTitle)}` : null,
+    !isOrder && e.receiptId ? `<button type="button" class="link-btn" data-receipt="${e.receiptId}" data-title="فیش پرداخت ${fa(e.amount)} تومان">${ic('image', 'sm')}مشاهده فیش</button>` : null,
     e.note ? esc(e.note) : null,
     `ثبت: ${esc(e.createdBy)}`,
     e.enteredAt ? `<span class="late">ثبت بعدی در ${fmtDT(e.enteredAt)}</span>` : null,
-  ].filter(Boolean).join(' · ');
+  ]);
   const amount = isOrder ? money(e.total) : `<span class="pay">${money(e.amount)}</span>`;
-  const voidNote = voided
-    ? `<div class="void-note">ابطال شد: ${esc(e.voidReason)} (${esc(e.voidedBy)} · ${fmtDT(e.voidedAt)})</div>` : '';
   const voidBtn = canVoid && !voided
     ? `<button class="btn link danger small" data-void="${e.kind}:${e.id}" title="ابطال این ثبت">ابطال</button>` : '';
   return `<div class="list-row ${voided ? 'voided' : ''}">
-    <div class="icon">${isOrder ? '☕' : '💵'}</div>
-    <div class="grow"><div class="title">${title}</div><div class="sub">${sub}</div>${voidNote}</div>
+    <div class="icon${isOrder ? '' : ' pay'}">${ic(isOrder ? 'receipt' : 'banknote')}</div>
+    <div class="grow"><div class="title">${title}</div>${sub}${voidNoteHtml(e)}</div>
     <div class="amount">${amount}</div>${voidBtn}</div>`;
 }
+
+const voidNoteHtml = (e) => (e.voidedAt
+  ? `<div class="void-note">${ic('alert', 'sm')}<span>ابطال شد: ${esc(e.voidReason)} (${esc(e.voidedBy)}، ${fmtDT(e.voidedAt)})</span></div>` : '');
 
 function settlementHtml(e, { showPerson, canVoid }) {
   const voided = !!e.voidedAt;
   const cleared = e.clearedAmount > 0 ? `بدهی صفرشده ${fa(e.clearedAmount)} تومان`
     : e.clearedAmount < 0 ? `طلب صفرشده ${fa(-e.clearedAmount)} تومان` : 'مانده‌ای نداشت';
-  const sub = [
+  const sub = metaHtml([
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     cleared,
     fmtDT(e.createdAt),
     e.note ? esc(e.note) : null,
     `ثبت: ${esc(e.createdBy)}`,
-  ].filter(Boolean).join(' · ');
-  const voidNote = voided
-    ? `<div class="void-note">ابطال شد: ${esc(e.voidReason)} (${esc(e.voidedBy)} · ${fmtDT(e.voidedAt)})</div>` : '';
+  ]);
   const voidBtn = canVoid && !voided
     ? `<button class="btn link danger small" data-void="settlement:${e.id}" title="ابطال این تسویه">ابطال</button>` : '';
   return `<div class="list-row settlement ${voided ? 'voided' : ''}">
-    <div class="icon">✅</div>
-    <div class="grow"><div class="title">تسویه تا ${faDigits(e.untilLabel)}</div><div class="sub">${sub}</div>${voidNote}</div>
+    <div class="icon done">${ic('check-circle')}</div>
+    <div class="grow"><div class="title">تسویه تا ${faDigits(e.untilLabel)}</div>${sub}${voidNoteHtml(e)}</div>
     ${voidBtn}</div>`;
 }
 
 const entriesHtml = (list, opts) =>
-  list.length ? list.map((e) => entryHtml(e, opts)).join('') : '<div class="empty">موردی ثبت نشده است.</div>';
+  list.length ? list.map((e) => entryHtml(e, opts)).join('') : emptyHtml('receipt', 'موردی ثبت نشده است.');
 
 function bindSearch(input, container) {
   input.addEventListener('input', () => {
@@ -273,10 +352,10 @@ async function viewReport(_, alive) {
               <a class="list-row" href="#/person/${p.id}" data-name="${esc(p.name)}">
                 <div class="grow">
                   <div class="title">${esc(p.name)} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
-                  <div class="sub">${fa(p.qty)} قلم · مصرف ${fa(p.consumed)} · پرداخت ${fa(p.paid)}${p.settledUntil ? ` · تسویه تا ${faDigits(p.settledUntil)}` : ''}</div>
+                  ${metaHtml([`${fa(p.qty)} قلم`, `مصرف ${fa(p.consumed)}`, `پرداخت ${fa(p.paid)}`, p.settledUntil ? `تسویه تا ${faDigits(p.settledUntil)}` : null])}
                 </div>
                 ${balanceBadge(p.balance)}
-              </a>`).join('') : '<div class="empty">هنوز شخصی تعریف نشده است.</div>'}
+              </a>`).join('') : emptyHtml('users', 'هنوز شخصی تعریف نشده است. <a href="#/people">تعریف افراد</a>')}
           </div>
         </div>
         <div class="card"><div class="card-head"><h2>آخرین ثبت‌ها</h2></div>
@@ -289,7 +368,7 @@ async function viewReport(_, alive) {
           ${summary.byItem.length ? summary.byItem.map((i) => `
             <div class="list-row"><div class="grow"><div class="title">${esc(i.name)}</div>
               <div class="sub">${fa(i.qty)} عدد</div></div><div class="amount">${money(i.total)}</div></div>`).join('')
-            : '<div class="empty">در این بازه چیزی مصرف نشده است.</div>'}
+            : emptyHtml('package', 'در این بازه چیزی مصرف نشده است.')}
         </div>
       </div>
     </div>`;
@@ -297,6 +376,8 @@ async function viewReport(_, alive) {
 }
 
 async function viewPerson(id, alive) {
+  // "#/me/pay" from older links and notifications: the receipt form now has its own page.
+  if (isEmployee() && id === 'pay') { location.replace('#/pay'); return; }
   if (isEmployee()) id = state.me.personId;
   const [summary, entries, balance] = await Promise.all([
     api('/api/report/summary?' + rangeQuery(state.period)),
@@ -309,15 +390,18 @@ async function viewPerson(id, alive) {
     ?? { name: list[0]?.personName ?? 'نامشخص', balance: 0, consumed: 0, paid: 0, qty: 0 };
 
   view.innerHTML = `
-    <div class="page-title"><h1>${esc(p.name)}</h1>${isAdmin() ? '<a class="btn ghost small" href="#/report">بازگشت به گزارش</a>' : ''}</div>
+    ${isEmployee() ? `<div class="card account-card"><div class="sheet-user" style="padding:0;border:0">
+        <span class="avatar">${ic('user')}</span>
+        <div class="body"><b><bdi>${esc(state.me.personName)}</bdi></b><span class="muted text-sm">همکار</span></div>
+        ${logoutButton('btn ghost small')}</div></div>` : ''}
+    <div class="page-title"><h1>${esc(p.name)}</h1>${isAdmin() ? `<a class="btn ghost small" href="#/report">${ic('undo', 'flip')}بازگشت به گزارش</a>` : ''}</div>
     ${isEmployee() ? driveBannerHtml(balance) : ''}
     <div class="card">
       <div class="card-head">
         <div class="muted">مانده‌ی حساب ${p.settledUntil ? `(بعد از تسویه تا ${faDigits(p.settledUntil)})` : '(از ابتدا تا امروز)'}</div>
-        ${isAdmin() && p.id ? `<a class="btn ghost small" href="#/payments/${p.id}">پرداخت / تسویه</a>` : ''}
+        ${isAdmin() && p.id ? `<a class="btn secondary small" href="#/payments/${p.id}">${ic('wallet')}پرداخت / تسویه</a>` : ''}
       </div>
-      <div class="balance-big">${money(Math.abs(p.balance))}</div>
-      ${balanceBadge(p.balance)}
+      <div class="balance-line"><div class="balance-big">${money(Math.abs(p.balance))}</div>${balanceState(p.balance)}</div>
       ${balanceBreakdownHtml(balance, { copy: isEmployee() })}
     </div>
     ${chipsHtml()}
@@ -333,13 +417,316 @@ async function viewPerson(id, alive) {
   if (isEmployee()) renderPushCard(alive);
 }
 
+/** Colleague's «ثبت فیش» page: where to pay (card numbers to copy), the receipt form, and earlier receipts. */
+async function viewPay(_, alive) {
+  const balance = await api('/api/report/balance');
+  if (!alive()) return;
+  view.innerHTML = `
+    <div class="page-title"><h1>ثبت فیش</h1></div>
+    ${driveBannerHtml(balance, { payLink: false })}
+    ${balance.cards.length && balance.total > 0 ? `<div class="card">
+      <div class="card-head"><h2>${ic('card')}کجا واریز کنم؟</h2><span class="badge debt">بدهی ${fa(balance.total)}</span></div>
+      ${balanceBreakdownHtml(balance, { copy: true })}
+    </div>` : ''}
+    <div class="card" id="pay-claim"></div>`;
+  await renderClaimForm($('#pay-claim'), balance, alive);
+}
+
+/** Manager's «بررسی فیش‌ها» page: receipts waiting for review, then the ones reviewed lately. */
+async function viewClaims(_, alive) {
+  const data = await api('/api/admin/payment-claims');
+  if (!alive()) return;
+  view.innerHTML = `
+    <div class="page-title"><h1>بررسی فیش‌ها</h1></div>
+    <div class="card claims-card" id="claims"></div>
+    <div class="card">
+      <div class="card-head"><h2>اخیراً بررسی‌شده</h2></div>
+      <div class="list">${data.recent.length ? data.recent.map((c) => `
+        <div class="list-row">
+          <button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
+            <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>
+          <div class="grow">
+            <div class="title">${esc(c.personName)}</div>
+            ${metaHtml([money(c.amount), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : null, fmtDT(c.reviewedAt), c.reviewedBy ? esc(c.reviewedBy) : null])}
+            ${c.rejectReason ? `<div class="void-note">${ic('alert', 'sm')}<span>دلیل: ${esc(c.rejectReason)}</span></div>` : ''}
+          </div>
+          ${claimBadge(c.status)}
+        </div>`).join('') : emptyHtml('image', 'هنوز فیشی بررسی نشده است.')}</div>
+    </div>`;
+  state.refreshClaims = () => route();
+  renderClaimsAdmin($('#claims'), () => route(), data.pending);
+}
+
+// ---------- payments reported by employees, with a receipt photo ----------
+const CLAIM_STATUS = {
+  pending: ['در انتظار بررسی', 'wait', 'timer'], approved: ['تأیید شد', 'credit', 'check-circle'],
+  rejected: ['رد شد', 'debt', 'x-circle'], cancelled: ['لغو شد', 'off', 'x'],
+};
+const claimBadge = (s) => `<span class="badge ${CLAIM_STATUS[s][1]}">${ic(CLAIM_STATUS[s][2])}${CLAIM_STATUS[s][0]}</span>`;
+const receiptUrl = (id) => `/api/receipts/${id}`;
+const kb = (bytes) => `${fa(Math.max(1, Math.round(bytes / 1024)))} کیلوبایت`;
+const MAX_RECEIPT_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Shrinks a photo before upload: at most 1600px on the long side, JPEG at 80%. A phone photo of 4–8 MB becomes
+ * about 150–350 KB, still sharp enough to read every digit of a receipt. Re-drawing also drops the photo's
+ * metadata (location, device). Returns the original file if the browser can't decode it but it is small enough.
+ */
+async function compressImage(file, maxSide = 1600, quality = 0.8) {
+  let source;
+  try {
+    source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      source = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = url;
+      });
+    } catch {
+      if (file.size <= MAX_RECEIPT_BYTES && /^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+      throw new Error('این عکس باز نشد؛ یک عکس JPG یا PNG از فیش انتخاب کنید.');
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const scale = Math.min(1, maxSide / Math.max(source.width, source.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(source.width * scale);
+  canvas.height = Math.round(source.height * scale);
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#fff'; // transparent PNG screenshots get a white page instead of black
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.drawImage(source, 0, 0, canvas.width, canvas.height);
+  source.close?.();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+  if (!blob) throw new Error('آماده‌سازی عکس ناموفق بود؛ دوباره امتحان کنید.');
+  return blob;
+}
+
+/** Colleague's "I paid" card: receipt photo, card, amount (with one-tap "fill my debt"), note; then the history. */
+async function renderClaimForm(card, balance, alive) {
+  const cards = balance.cards ?? [];
+  const debtOf = (cardId) => (cardId === '' ? balance.general : cards.find((c) => String(c.id) === cardId)?.balance ?? 0);
+  // Pre-select the card that is owed the most.
+  const owed = [...cards].filter((c) => c.balance > 0).sort((a, b) => b.balance - a.balance)[0];
+  let photo = null;
+
+  card.innerHTML = `
+    <div class="card-head"><h2>${ic('image')}فیش جدید</h2><span id="claim-pending"></span></div>
+    <p class="card-intro">بعد از واریز، عکس فیش را بفرستید. مسئول بوفه آن را بررسی می‌کند و با تأیید، از بدهی شما کم می‌شود.</p>
+    <form class="form" id="claim-form" novalidate>
+      <div class="field-label">۱. عکس فیش واریزی</div>
+      <input type="file" id="receipt-input" accept="image/*" hidden>
+      <button type="button" class="receipt-drop" id="receipt-pick">
+        <span class="em-icon">${ic('image')}</span>
+        <b>انتخاب عکس فیش</b>
+        <span class="hint">از گالری یا با دوربین؛ قبل از ارسال کم‌حجم می‌شود</span>
+      </button>
+      <div class="receipt-preview" id="receipt-preview" hidden>
+        <img id="receipt-thumb" alt="پیش‌نمایش فیش">
+        <div class="grow"><b>فیش آماده است</b><div class="hint" id="receipt-size"></div></div>
+        <button type="button" class="btn ghost small" id="receipt-change">تغییر عکس</button>
+      </div>
+      ${cards.length ? `<label>۲. به کدام کارت واریز کردید؟
+        <select name="cardId" id="claim-card">
+          ${cards.map((c) => `<option value="${c.id}" ${owed?.id === c.id ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
+          <option value="">سایر (بدون کارت)</option>
+        </select></label>` : ''}
+      <label>${cards.length ? '۳' : '۲'}. مبلغ واریزی (تومان)
+        <input name="amount" id="claim-amount" inputmode="numeric" data-amount autocomplete="off" placeholder="مثلاً ۴۵۰۰۰"><span class="hint"></span>
+      </label>
+      <div class="chips tight wrap" id="claim-fill"></div>
+      <label>توضیح (اختیاری)<input name="note" maxlength="200" placeholder="مثلاً شماره پیگیری یا ۴ رقم آخر کارت مبدأ"></label>
+      <button class="btn large block" id="claim-submit" disabled>${ic('check')}ارسال برای بررسی</button>
+    </form>
+    <div id="claim-list" class="mt-3"></div>`;
+
+  const form = $('#claim-form', card);
+  const amount = $('#claim-amount', card);
+  const cardSelect = $('#claim-card', card);
+  const submit = $('#claim-submit', card);
+  const ready = () => { submit.disabled = !photo || !(parseAmount(amount.value) > 0); };
+
+  // "Fill my debt": the debt on the chosen card, and the whole debt when that is different.
+  const renderFill = () => {
+    const cardId = cardSelect?.value ?? '';
+    const own = cards.length ? debtOf(cardId) : balance.total;
+    const chips = [];
+    if (own > 0) chips.push([own, cards.length ? `درج بدهی این کارت: ${fa(own)}` : `درج مبلغ بدهی: ${fa(own)}`]);
+    if (cards.length && balance.total > 0 && balance.total !== own) chips.push([balance.total, `کل بدهی: ${fa(balance.total)}`]);
+    if (balance.due > 0 && !chips.some(([n]) => n === balance.due)) chips.push([balance.due, `بدهی دوره‌ی تسویه: ${fa(balance.due)}`]);
+    $('#claim-fill', card).innerHTML = chips.map(([n, label]) =>
+      `<button type="button" class="chip" data-claim-fill="${n}">${ic('plus', 'sm')}${label}</button>`).join('');
+  };
+  renderFill();
+  bindAmountHints(card);
+
+  const pick = $('#receipt-pick', card);
+  const input = $('#receipt-input', card);
+  const showPhoto = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('فقط عکس قابل قبول است.', true); return; }
+    pick.disabled = true;
+    try {
+      const blob = await compressImage(file);
+      if (blob.size > MAX_RECEIPT_BYTES) throw new Error('حجم عکس بیشتر از ۳ مگابایت است؛ عکس دیگری انتخاب کنید.');
+      photo = blob;
+      const thumb = $('#receipt-thumb', card);
+      if (thumb.src) URL.revokeObjectURL(thumb.src);
+      thumb.src = URL.createObjectURL(blob);
+      $('#receipt-size', card).textContent = kb(blob.size);
+      pick.hidden = true;
+      $('#receipt-preview', card).hidden = false;
+      if (!amount.value) amount.focus();
+    } catch (err) { toast(err.message, true); }
+    finally { pick.disabled = false; ready(); }
+  };
+  input.onchange = () => { showPhoto(input.files[0]); input.value = ''; };
+  card.onclick = async (e) => {
+    if (e.target.closest('#receipt-pick, #receipt-change')) return input.click();
+    const fill = e.target.closest('[data-claim-fill]');
+    if (fill) { amount.value = faDigits(fill.dataset.claimFill); amount.dispatchEvent(new Event('input')); return ready(); }
+    const cancel = e.target.closest('[data-claim-cancel]');
+    if (cancel) {
+      if (!await askConfirm({ title: 'این پرداخت از صف بررسی برداشته شود؟', text: 'عکس فیش هم حذف می‌شود.', okText: 'لغو پرداخت' })) return;
+      try { await api(`/api/payment-claims/${cancel.dataset.claimCancel}/cancel`, { method: 'POST' }); toast('پرداخت لغو شد.'); renderList(); }
+      catch (err) { toast(err.message, true); }
+    }
+  };
+  // Dropping a photo onto the box works on desktop too.
+  pick.ondragover = (e) => { e.preventDefault(); pick.classList.add('over'); };
+  pick.ondragleave = () => pick.classList.remove('over');
+  pick.ondrop = (e) => { e.preventDefault(); pick.classList.remove('over'); showPhoto(e.dataTransfer.files[0]); };
+  cardSelect?.addEventListener('change', renderFill);
+  amount.addEventListener('input', ready);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const n = parseAmount(fd.get('amount'));
+    if (!photo) return toast('عکس فیش واریزی را پیوست کنید.', true);
+    if (!(n > 0)) return toast('مبلغ واریزی را وارد کنید.', true);
+    const body = new FormData();
+    body.append('receipt', photo, 'receipt.jpg');
+    body.append('amount', String(n));
+    if (fd.get('cardId')) body.append('cardId', fd.get('cardId'));
+    if (fd.get('note')) body.append('note', fd.get('note'));
+    submit.disabled = true;
+    try {
+      await api('/api/payment-claims', { method: 'POST', body });
+      toast('فیش فرستاده شد؛ بعد از بررسی مسئول بوفه از بدهی‌تان کم می‌شود.');
+      photo = null;
+      form.reset();
+      amount.dispatchEvent(new Event('input'));
+      $('#receipt-preview', card).hidden = true;
+      pick.hidden = false;
+      renderFill();
+      await renderList();
+    } catch (err) { toast(err.message, true); }
+    ready();
+  });
+
+  async function renderList() {
+    const claims = await api('/api/payment-claims');
+    if (!alive()) return;
+    const pending = claims.filter((c) => c.status === 'pending');
+    $('#claim-pending', card).innerHTML = pending.length
+      ? `<span class="badge wait">${ic('timer')}${fa(pending.length)} در انتظار بررسی</span>` : '';
+    $('#claim-list', card).innerHTML = claims.length ? `
+      <div class="section-label">پرداخت‌های ارسالی</div>
+      <div class="list">${claims.map((c) => `
+        <div class="list-row">
+          ${c.status === 'cancelled' ? `<div class="icon">${ic('image')}</div>`
+            : `<button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
+                 <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>`}
+          <div class="grow">
+            <div class="title">${money(c.amount)}</div>
+            ${metaHtml([fmtDT(c.createdAt), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : null, c.note ? esc(c.note) : null])}
+            ${c.rejectReason ? `<div class="void-note">${ic('alert', 'sm')}<span>دلیل: ${esc(c.rejectReason)}</span></div>` : ''}
+          </div>
+          <div class="actions">${claimBadge(c.status)}
+            ${c.status === 'pending' ? `<button type="button" class="icon-btn small danger" data-claim-cancel="${c.id}" title="لغو" aria-label="لغو این پرداخت">${ic('trash')}</button>` : ''}
+          </div>
+        </div>`).join('')}</div>` : '';
+  }
+  await renderList();
+}
+
+/** Review queue: look at the receipt, then approve (records the payment) or reject with a reason. */
+function renderClaimsAdmin(card, onChange, pending) {
+  state.pendingClaims = pending.length;
+  setTabBadge('claims', pending.length);
+  if (!pending.length) {
+    card.innerHTML = `<div class="card-head"><h2>${ic('image')}در انتظار بررسی</h2></div>
+      ${emptyHtml('check-circle', 'فیشی در انتظار بررسی نیست. فیش‌هایی که همکاران از صفحه‌ی «ثبت فیش» می‌فرستند اینجا می‌آیند.')}`;
+    return;
+  }
+  card.innerHTML = `
+    <div class="card-head"><h2>${ic('image')}در انتظار بررسی</h2><span class="badge wait">${fa(pending.length)}</span></div>
+    <p class="card-intro">روی عکس بزنید تا بزرگ شود. با «تأیید» پرداخت ثبت و از بدهی همکار کم می‌شود.</p>
+    <div class="claims">${pending.map((c) => `
+      <article class="claim" data-claim="${c.id}">
+        <button type="button" class="claim-photo" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${fa(c.amount)} تومان" aria-label="بزرگ کردن عکس فیش">
+          <img src="${receiptUrl(c.id)}" alt="فیش ${esc(c.personName)}" loading="lazy" decoding="async">
+        </button>
+        <div class="claim-body">
+          <div class="claim-who">${esc(c.personName)}</div>
+          <div class="claim-amount">${money(c.amount)}</div>
+          ${metaHtml([fmtDT(c.createdAt), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : 'بدون کارت'])}
+          ${c.note ? `<div><span class="req-note">${ic('note')}${esc(c.note)}</span></div>` : ''}
+          ${c.lookalikeId ? `<div><span class="badge warn">${ic('alert', 'sm')}فیش دیگری با همین مبلغ از همین همکار در همین هفته هست؛ تکراری نباشد</span></div>` : ''}
+        </div>
+        <div class="claim-actions">
+          <button type="button" class="btn" data-claim-approve="${c.id}">${ic('check')}تأیید و ثبت پرداخت</button>
+          <button type="button" class="btn link danger" data-claim-reject="${c.id}">${ic('x-circle')}رد</button>
+        </div>
+      </article>`).join('')}
+    </div>`;
+  card.onclick = async (e) => {
+    const approve = e.target.closest('[data-claim-approve]');
+    const reject = e.target.closest('[data-claim-reject]');
+    if (!approve && !reject) return;
+    const btn = approve ?? reject;
+    try {
+      if (approve) {
+        btn.disabled = true;
+        const res = await api(`/api/admin/payment-claims/${approve.dataset.claimApprove}/approve`, { method: 'POST' });
+        toast(`پرداخت ${res.personName} ثبت شد: ${fa(res.amount)} تومان`);
+      } else {
+        const reason = await askText({
+          title: 'رد فیش پرداخت', text: 'دلیل را بنویسید تا همکار ببیند و دوباره بفرستد.',
+          placeholder: 'مثلاً مبلغ فیش با مبلغ واردشده یکی نیست', okText: 'رد فیش',
+        });
+        if (!reason) return;
+        await api(`/api/admin/payment-claims/${reject.dataset.claimReject}/reject`, { method: 'POST', body: { reason } });
+        toast('فیش رد شد و به همکار خبر داده شد.');
+      }
+      onChange();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  };
+}
+
+// Full-size receipt in a dialog; works for the manager (any) and an employee (their own).
+document.addEventListener('click', (e) => {
+  const open = e.target.closest('[data-receipt]');
+  if (!open) return;
+  const dlg = $('#viewer');
+  $('#viewer-title').textContent = open.dataset.title || 'عکس فیش';
+  $('#viewer-img').src = receiptUrl(open.dataset.receipt);
+  $('#viewer-open').href = receiptUrl(open.dataset.receipt);
+  dlg.showModal();
+});
+$('#viewer-close')?.addEventListener('click', () => $('#viewer').close());
+$('#viewer')?.addEventListener('click', (e) => { if (e.target.id === 'viewer') e.target.close(); });
+
 async function viewLogin(mode) {
   if (state.me.loggedIn) { location.hash = homeHash(); return; }
   const setup = state.me.needsSetup;
   if (mode !== 'admin' && !setup) {
     view.innerHTML = `
       <div class="card login-card">
-        <h2>ورود</h2>
+        <h1>ورود</h1>
         <p class="muted">با کد ملی خود وارد شوید تا صبحانه و نوشیدنی‌هایی را که برایتان ثبت شده ببینید. یک بار ورود کافی است و روی این دستگاه وارد می‌مانید.</p>
         <form class="form" id="f">
           <label>کد ملی<input name="code" inputmode="numeric" maxlength="12" autocomplete="off" required autofocus placeholder="۱۰ رقم" class="code-input"></label>
@@ -357,10 +744,10 @@ async function viewLogin(mode) {
   }
   view.innerHTML = `
     <div class="card login-card">
-      <h2>${setup ? 'ساخت حساب مسئول' : 'ورود مسئول'}</h2>
+      <h1>${setup ? 'ساخت حساب مسئول' : 'ورود مسئول'}</h1>
       <p class="muted">${setup ? 'اولین اجراست؛ یک حساب برای مسئول بوفه بسازید.' : 'برای ثبت سفارش، مدیریت و دیدن گزارش همه وارد شوید.'}</p>
       <form class="form" id="f">
-        <label>نام کاربری<input name="username" autocomplete="username" required autofocus></label>
+        <label>نام کاربری<input name="username" autocomplete="username" required autofocus dir="auto"></label>
         <label>رمز عبور<input name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required></label>
         <button class="btn block">${setup ? 'ساخت حساب و ورود' : 'ورود'}</button>
       </form>
@@ -389,9 +776,9 @@ async function viewOrder(_, alive) {
   const isToday = () => day.label === jalaliLabel();
 
   if (!activePeople.length || !activeItems.length) {
-    view.innerHTML = `<div class="card empty">
+    view.innerHTML = `<div class="card">${emptyHtml(!activePeople.length ? 'users' : 'package', `
       ${!activePeople.length ? 'هنوز شخصی تعریف نشده. <a href="#/people">تعریف افراد</a><br>' : ''}
-      ${!activeItems.length ? 'هنوز کالایی تعریف نشده. <a href="#/items">تعریف کالاها</a>' : ''}</div>`;
+      ${!activeItems.length ? 'هنوز کالایی تعریف نشده. <a href="#/items">تعریف کالاها</a>' : ''}`)}</div>`;
     return;
   }
 
@@ -409,7 +796,7 @@ async function viewOrder(_, alive) {
           <label>تاریخ سفارش (شمسی)
             <input id="day" inputmode="numeric" placeholder="۱۴۰۵/۰۸/۰۵" autocomplete="off" value="${faDigits(day.label)}">
           </label>
-          <div class="chips" style="margin:0">
+          <div class="chips tight">
             <button type="button" class="chip" data-day="${jalaliLabel()}">امروز</button>
             <button type="button" class="chip" data-day="${jalaliLabel(-1)}">دیروز</button>
             <button type="button" class="chip" data-day="${jalaliLabel(-2)}">پریروز</button>
@@ -417,7 +804,7 @@ async function viewOrder(_, alive) {
           <div class="hint" id="day-hint"></div>
         </div>
         <div class="card">
-          <h2 style="margin-bottom:10px">برای چه کسی؟</h2>
+          <div class="card-head"><h2>برای چه کسی؟</h2></div>
           <input class="search" id="pq" placeholder="جستجوی نام…" autocomplete="off">
           <div class="people-grid" id="pgrid">
             ${activePeople.map((p) => `<button class="person-btn" data-person="${p.id}" data-name="${esc(p.name)}">${esc(p.name)}</button>`).join('')}
@@ -462,7 +849,7 @@ async function viewOrder(_, alive) {
     layout.classList.toggle('has-person', !!person);
     layout.querySelectorAll('.person-btn').forEach((b) => b.classList.toggle('current', person && b.dataset.person == person.id));
     if (!person) {
-      ipane.innerHTML = '<div class="card empty-pane"><div class="muted">از لیست، شخص را انتخاب کنید.</div></div>';
+      ipane.innerHTML = `<div class="card empty-pane">${emptyHtml('user', 'از لیست، شخص را انتخاب کنید.')}</div>`;
       return;
     }
     ipane.innerHTML = `
@@ -470,30 +857,13 @@ async function viewOrder(_, alive) {
         <div class="order-head">
           <div><small>سفارش برای</small><div class="who">${esc(person.name)}</div>
             <small class="${isToday() ? '' : 'past-day'}">${isToday() ? 'امروز' : 'تاریخ'} ${faDigits(day.label)}</small></div>
-          <button type="button" class="btn ghost small back-btn" id="change">تغییر شخص</button>
+          <button type="button" class="btn ghost small back-btn" id="change">${ic('undo', 'flip')}تغییر شخص</button>
         </div>
         ${sectionsFor(person).map(({ c, list }) => `
           <div class="cat-title">${esc(c.name)} ${c.id ? categoryRulesHtml(c) : ''}</div>
-          <div class="items-grid">
-            ${list.map((i) => `
-              <div class="item-tile" data-item="${i.id}">
-                <div class="name">${esc(i.name)}</div>
-                <div class="price">${priceHtml(i.price)}</div>
-                <div class="stepper">
-                  <button type="button" data-step="-1" aria-label="کم کردن">−</button>
-                  <span class="qty">۰</span>
-                  <button type="button" data-step="1" aria-label="اضافه کردن">+</button>
-                </div>
-              </div>`).join('')}
-          </div>`).join('')}
-        <label style="margin-top:14px">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً بدون شکر"></label>
-        <div class="order-bar">
-          <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
-          <div class="order-actions">
-            <button type="button" class="btn ghost" id="clear-cart" hidden title="صفر کردن همه‌ی اقلام انتخاب‌شده">🗑️ خالی کردن</button>
-            <button class="btn" id="submit">ثبت سفارش</button>
-          </div>
-        </div>
+          <div class="items-grid">${list.map(itemTileHtml).join('')}</div>`).join('')}
+        <label class="note-field">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً بدون شکر"></label>
+        ${orderBarHtml('ثبت سفارش')}
       </div>`;
     updateBar();
   };
@@ -597,8 +967,9 @@ async function viewOrder(_, alive) {
 }
 
 async function viewPayments(preselectId, alive) {
-  const [people, summary, entries, cards, drive] = await Promise.all([
+  const [people, summary, entries, cards, drive, waiting] = await Promise.all([
     api('/api/admin/people'), api('/api/report/summary'), api('/api/report/entries'), api('/api/admin/cards'), api('/api/report/drive'),
+    api('/api/admin/requests/pending'),
   ]);
   if (!alive()) return;
   const info = new Map(summary.people.map((p) => [p.id, p]));
@@ -607,28 +978,23 @@ async function viewPayments(preselectId, alive) {
   // stable alphabetical list here, the badge shows who owes.
   const choosable = people.filter((p) => p.isActive || (info.get(p.id)?.balance ?? 0) !== 0).sort(byName);
   let selected = null;
-  const lastMonthEnd = (() => {
-    const j = parseJalali(jalaliLabel());
-    const d = new Date(j.date);
-    d.setDate(d.getDate() - Number(j.label.slice(8)));
-    const r = toJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
-    return `${r.jy}/${pad2(r.jm)}/${pad2(r.jd)}`;
-  })();
+  const lastMonthEnd = lastMonthEndLabel();
 
   view.innerHTML = `
     <div class="page-title"><h1>پرداخت و تسویه</h1></div>
-    <div class="card drive-card ${drive.active ? 'on' : ''}" id="drive"></div>
+    <div class="drive-card" id="drive"></div>
+    ${waiting.claims ? `<div class="banner">${ic('image')}
+      <div class="b-title">${fa(waiting.claims)} فیش پرداخت در انتظار بررسی است</div>
+      <div class="b-actions"><a class="btn small" href="#/claims">بررسی فیش‌ها</a></div>
+    </div>` : ''}
     <div class="card">
       <div class="card-head"><h2>برای چه کسی؟</h2></div>
       <input class="search" id="pq" placeholder="جستجوی نام…" autocomplete="off">
-      <div class="people-grid pay-people" id="pgrid">
-        ${choosable.map((p) => {
-          const b = info.get(p.id)?.balance ?? 0;
-          return `<button type="button" class="person-btn" data-pick="${p.id}" data-name="${esc(p.name)}">
+      <div class="pick-list" id="pgrid">
+        ${choosable.map((p) => `<button type="button" class="pick-row" data-pick="${p.id}" data-name="${esc(p.name)}">
             <span>${esc(p.name)}${p.isActive ? '' : ' <small>(غیرفعال)</small>'}</span>
-            ${b > 0 ? `<small class="debt">${fa(b)}</small>` : b < 0 ? `<small class="credit">+${fa(-b)}</small>` : ''}
-          </button>`;
-        }).join('')}
+            ${balanceBadge(info.get(p.id)?.balance ?? 0)}
+          </button>`).join('')}
       </div>
     </div>
     <div class="cols">
@@ -651,12 +1017,12 @@ async function viewPayments(preselectId, alive) {
         </div>
         <div class="card">
           <div class="card-head"><h2>تسویه تا تاریخ</h2></div>
-          <p class="muted" style="margin:0 0 12px">همه‌ی سفارش‌ها و پرداخت‌های این شخص تا پایان تاریخ انتخابی بسته می‌شود و مانده‌ی آن دوره صفر می‌شود، فارغ از اینکه چقدر پرداخت کرده است.</p>
+          <p class="card-intro">همه‌ی سفارش‌ها و پرداخت‌های این شخص تا پایان تاریخ انتخابی بسته می‌شود و مانده‌ی آن دوره صفر می‌شود، فارغ از اینکه چقدر پرداخت کرده است.</p>
           <form class="form" id="settle">
             <label>تا تاریخ (شمسی)
               <input name="until" id="until" inputmode="numeric" placeholder="۱۴۰۵/۰۸/۰۵" required autocomplete="off" value="${faDigits(jalaliLabel())}">
             </label>
-            <div class="chips" style="margin:0">
+            <div class="chips tight">
               <button type="button" class="chip" data-until="${jalaliLabel()}">امروز</button>
               <button type="button" class="chip" data-until="${jalaliLabel(-1)}">دیروز</button>
               <button type="button" class="chip" data-until="${lastMonthEnd}">پایان ماه قبل</button>
@@ -699,9 +1065,9 @@ async function viewPayments(preselectId, alive) {
     if (seq !== balanceSeq || !alive()) return;
     $('#who').innerHTML = `
       <div class="who-head"><div class="who">${esc(person?.name ?? '')}</div>${balanceBadge(b.total)}</div>
-      ${p?.settledUntil ? `<div class="muted" style="font-size:13px">آخرین تسویه تا ${faDigits(p.settledUntil)}</div>` : ''}
+      ${p?.settledUntil ? `<div class="muted text-sm">آخرین تسویه تا ${faDigits(p.settledUntil)}</div>` : ''}
       ${balanceBreakdownHtml(b, { payButtons: true })}
-      ${b.total > 0 ? `<button type="button" class="btn ghost small" data-fill="all:${b.total}" style="margin-top:10px">پرداخت کل بدهی (${fa(b.total)} تومان)</button>` : ''}`;
+      ${b.total > 0 ? `<div class="row-end mt-3"><button type="button" class="btn secondary small" data-fill="all:${b.total}">${ic('banknote')}پرداخت کل بدهی (${fa(b.total)} تومان)</button></div>` : ''}`;
   };
   // One tap selects; the page scrolls to the payment form on phones.
   const pick = (id) => {
@@ -763,7 +1129,11 @@ async function viewPayments(preselectId, alive) {
     const j = parseJalali(fd.get('until'));
     if (!personId() || !j) throw new Error('شخص و تاریخ را درست وارد کنید.');
     const name = people.find((x) => x.id === personId())?.name ?? '';
-    if (!confirm(`حساب «${name}» تا پایان ${faDigits(j.label)} تسویه شود؟`)) return;
+    if (!await askConfirm({
+      title: `حساب «${name}» تا پایان ${faDigits(j.label)} تسویه شود؟`,
+      text: 'مانده‌ی این دوره صفر می‌شود. در صورت اشتباه می‌توانید تسویه را ابطال کنید.',
+      okText: 'ثبت تسویه', danger: false,
+    })) return;
     const cutoff = new Date(j.date);
     cutoff.setDate(cutoff.getDate() + 1);
     await api('/api/admin/settlements', {
@@ -785,68 +1155,100 @@ async function viewPayments(preselectId, alive) {
  */
 function balanceBreakdownHtml(b, { copy = false, payButtons = false } = {}) {
   if (!b.cards.length) return '';
-  const amount = (n) => (n > 0 ? `<span class="debt">بدهی ${fa(n)}</span>` : n < 0 ? `<span class="credit">طلب ${fa(-n)}</span>` : '<span class="muted">۰</span>');
-  const fill = (key, n) => (payButtons && n > 0 ? `<button type="button" class="btn link small" data-fill="${key}:${n}">پرداخت</button>` : '');
+  const amount = (n) => (n > 0 ? `<span class="badge debt">بدهی ${fa(n)}</span>` : n < 0 ? `<span class="badge credit">طلب ${fa(-n)}</span>` : '<span class="badge zero">بدون بدهی</span>');
+  const fill = (key, n) => (payButtons && n > 0 ? `<button type="button" class="btn secondary small" data-fill="${key}:${n}">پرداخت</button>` : '');
+  // Row 1: card title, what is owed on it, and "copy" or "pay". Row 2: the number alone, full width, one line.
   return `
     <div class="pay-cards">
-      ${copy ? '<div class="muted" style="font-size:13px">بدهی به تفکیک کارت؛ برای پرداخت روی شماره کارت بزنید تا کپی شود:</div>' : ''}
-      ${b.cards.map((c) => `
-        <div class="pay-card-row">
-          ${copy
-            ? `<button type="button" class="pay-card" data-copy="${esc(c.number)}" title="کپی شماره کارت">
-                 <span class="t">${esc(c.title)}</span><span class="n">${cardNumberText(c.number)}</span><span class="c">📋 کپی</span>
-               </button>`
-            : `<div class="pay-card static"><span class="t">${esc(c.title)}</span><span class="n">${cardNumberText(c.number)}</span></div>`}
-          <div class="card-balance">${amount(c.balance)}${fill(c.id, c.balance)}</div>
-        </div>`).join('')}
+      ${copy ? '<div class="lead">بدهی به تفکیک کارت؛ برای پرداخت روی کارت بزنید تا شماره‌اش کپی شود:</div>' : ''}
+      ${b.cards.map((c) => (copy
+        ? `<button type="button" class="pay-card" data-copy="${esc(c.number)}" title="کپی شماره کارت">
+             <span class="t">${ic('card', 'sm')}${esc(c.title)}${amount(c.balance)}</span><span class="c">${ic('copy', 'sm')}کپی</span>
+             <span class="n">${cardNumberText(c.number)}</span>
+           </button>`
+        : `<div class="pay-card">
+             <span class="t">${ic('card', 'sm')}${esc(c.title)}${amount(c.balance)}</span><span class="end">${fill(c.id, c.balance)}</span>
+             <span class="n">${cardNumberText(c.number)}</span>
+           </div>`)).join('')}
       ${b.general !== 0 ? `
-        <div class="pay-card-row">
-          <div class="pay-card static"><span class="t">سایر (بدون کارت)</span><span class="n" style="font-size:14px">اقلامی که دسته‌شان کارت ندارد</span></div>
-          <div class="card-balance">${amount(b.general)}${fill('general', b.general)}</div>
+        <div class="pay-card">
+          <span class="t">سایر (بدون کارت)${amount(b.general)}</span><span class="end">${fill('general', b.general)}</span>
+          <span class="n text">اقلامی که دسته‌شان کارت ندارد</span>
         </div>` : ''}
     </div>`;
 }
 
-/** Manager's "settlement drive" card on the payments page: start / end, and who still owes. */
+/** Manager's "settlement drive" card on the payments page: start (up to a date) / end, and who still owes. */
 async function renderDrive(card, drive, onPick) {
   if (!drive.active) {
-    card.classList.remove('on');
-    card.innerHTML = `
-      <div class="card-head"><h2>💳 تسویه حساب همگانی</h2><button type="button" class="btn" id="drive-start">شروع تسویه</button></div>
-      <p class="muted" style="margin:0">با شروع تسویه، برای همه اعلان «درخواست تسویه حساب» می‌رود و تا وقتی «پایان تسویه» را نزنید، هر کس بدهکار باشد نمی‌تواند هیچ درخواستی ثبت کند (حتی اقلام رایگان).</p>`;
+    card.className = 'drive-card banner';
+    card.innerHTML = `${ic('megaphone')}
+      <div class="b-title">تسویه حساب همگانی</div>
+      <div class="b-body muted">خریدهای تا پایان تاریخ انتخابی باید پرداخت شوند. فقط به بدهکارهای این بازه اعلان می‌رود و تا پرداخت نکنند درخواست ثبت نمی‌کنند (حتی اقلام رایگان). خریدهای بعد از این تاریخ کسی را متوقف نمی‌کند.</div>
+      <form class="b-actions drive-form" id="drive-form">
+        <label class="drive-until">تا تاریخ
+          <input name="until" inputmode="numeric" placeholder="۱۴۰۵/۰۸/۰۵" required autocomplete="off" value="${faDigits(jalaliLabel())}">
+        </label>
+        <button type="button" class="chip" data-drive-until="${jalaliLabel()}">امروز</button>
+        <button type="button" class="chip" data-drive-until="${jalaliLabel(-1)}">دیروز</button>
+        <button type="button" class="chip" data-drive-until="${lastMonthEndLabel()}">پایان ماه قبل</button>
+        <button type="submit" class="btn small push-end">شروع تسویه</button>
+      </form>`;
   } else {
     const debtors = await api('/api/admin/drive/debtors');
-    card.classList.add('on');
-    card.innerHTML = `
-      <div class="card-head"><h2>💳 تسویه در جریان است</h2><button type="button" class="btn danger" id="drive-end">پایان تسویه</button></div>
-      <p class="muted" style="margin:0 0 10px">از ${fmtDT(drive.startedAt)}${drive.startedBy ? ` توسط ${esc(drive.startedBy)}` : ''}. بدهکارها تا پرداخت نکنند درخواست ثبت نمی‌کنند.</p>
-      ${debtors.length ? `<div class="debtors">${debtors.map((d) => `
-        <button type="button" class="chip" data-debtor="${d.personId}">${esc(d.name)} · ${fa(d.balance)}</button>`).join('')}</div>`
-        : '<div class="badge credit">همه تسویه کرده‌اند 🎉</div>'}`;
+    card.className = 'drive-card banner warn';
+    card.innerHTML = `${ic('megaphone')}
+      <div class="b-title">تسویه‌ی خریدهای ${drive.untilLabel ? `تا ${faDigits(drive.untilLabel)}` : 'قبل از شروع تسویه'} در جریان است</div>
+      <div class="b-body">${metaHtml([`از ${fmtDT(drive.startedAt)}`, drive.startedBy ? `توسط ${esc(drive.startedBy)}` : null], '')}
+        ${debtors.length ? `${fa(debtors.length)} نفر بابت این بازه هنوز بدهکارند؛ تا پرداخت نکنند درخواست ثبت نمی‌کنند.` : ''}</div>
+      <div class="b-actions">
+        ${debtors.length ? debtors.map((d) => `
+          <button type="button" class="chip" data-debtor="${d.personId}">${esc(d.name)} <b>${fa(d.balance)}</b></button>`).join('')
+          : `<span class="badge credit lg">${ic('check-circle')}همه تسویه کرده‌اند</span>`}
+        <button type="button" class="btn danger small push-end" id="drive-end">پایان تسویه</button>
+      </div>`;
   }
   card.onclick = async (e) => {
     const debtor = e.target.closest('[data-debtor]');
     if (debtor) return onPick(Number(debtor.dataset.debtor));
-    const start = e.target.closest('#drive-start');
-    const end = e.target.closest('#drive-end');
-    if (!start && !end) return;
-    if (start && !confirm('تسویه شروع شود؟ برای همه اعلان می‌رود و بدهکارها تا پرداخت، درخواست ثبت نمی‌کنند.')) return;
-    if (end && !confirm('تسویه تمام شود؟ ثبت درخواست برای همه آزاد می‌شود.')) return;
+    const chip = e.target.closest('[data-drive-until]');
+    if (chip) { card.querySelector('[name=until]').value = faDigits(chip.dataset.driveUntil); return; }
+    if (!e.target.closest('#drive-end')) return;
+    if (!await askConfirm({ title: 'تسویه‌ی همگانی تمام شود؟', text: 'ثبت درخواست برای همه آزاد می‌شود. اعلانی برای کسی نمی‌رود.', okText: 'پایان تسویه' })) return;
     try {
-      const next = await api(`/api/admin/drive/${start ? 'start' : 'end'}`, { method: 'POST' });
-      toast(start ? 'تسویه شروع شد و برای همه اعلان رفت.' : 'تسویه تمام شد.');
-      renderDrive(card, next, onPick);
+      const next = await api('/api/admin/drive/end', { method: 'POST' });
+      toast('تسویه تمام شد.');
+      renderDrive(card, next.drive, onPick);
+    } catch (err) { toast(err.message, true); }
+  };
+  const form = card.querySelector('#drive-form');
+  if (form) form.onsubmit = async (e) => {
+    e.preventDefault();
+    const j = parseJalali(form.elements.until.value);
+    if (!j) return toast('تاریخ را درست وارد کنید (مثل ۱۴۰۵/۰۸/۲۳).', true);
+    if (j.label > jalaliLabel()) return toast('تاریخ تسویه نمی‌تواند در آینده باشد.', true);
+    if (!await askConfirm({
+      title: `تسویه‌ی خریدهای تا پایان ${faDigits(j.label)} شروع شود؟`,
+      text: 'فقط به کسانی که بابت این بازه بدهکارند اعلان می‌رود و تا پرداخت، درخواست ثبت نمی‌کنند.',
+      okText: 'شروع تسویه', danger: false,
+    })) return;
+    try {
+      const next = await api('/api/admin/drive/start', { method: 'POST', body: { until: endOfJalaliDay(j), untilLabel: j.label } });
+      toast(next.notified ? `تسویه شروع شد؛ برای ${fa(next.notified)} بدهکار اعلان رفت.` : 'تسویه شروع شد؛ در این بازه کسی بدهکار نیست.');
+      renderDrive(card, next.drive, onPick);
     } catch (err) { toast(err.message, true); }
   };
 }
 
 /** Colleague-facing banner while a settlement drive is on. */
-const driveBannerHtml = (b) => (b.drive?.active ? `
-  <div class="card drive-banner ${b.total > 0 ? 'blocked' : ''}">
-    <b>💳 درخواست تسویه حساب</b>
-    <p>مسئول بوفه درخواست تسویه حساب ارسال کرده است. ${b.total > 0
-      ? `حساب شما <b>${fa(b.total)} تومان</b> بدهکار است؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
-      : 'حساب شما بدهی ندارد؛ ممنون 🙏'}</p>
+const driveBannerHtml = (b, { payLink = true } = {}) => (b.drive?.active ? `
+  <div class="banner ${b.due > 0 ? 'danger' : 'warn'}">
+    ${ic('megaphone')}
+    <div class="b-title">درخواست تسویه حساب</div>
+    <div class="b-body">مسئول بوفه درخواست تسویه‌ی خریدهای ${b.drive.untilLabel ? `تا ${faDigits(b.drive.untilLabel)}` : 'قبل از شروع تسویه'} را ارسال کرده است. ${b.due > 0
+      ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
+      : 'بدهی این بازه را پرداخت کرده‌اید؛ ممنون.'}</div>
+    ${b.due > 0 && payLink ? `<div class="b-actions"><a class="btn small" href="#/pay">${ic('image')}ثبت فیش پرداخت</a></div>` : ''}
   </div>` : '');
 
 // ---------- Excel import (items and people) ----------
@@ -891,7 +1293,7 @@ function openImport(kind, container) {
   container.hidden = false;
   container.innerHTML = `
     <div class="card-head"><h2>${cfg.title}</h2><button type="button" class="btn ghost small" data-imp="close">بستن</button></div>
-    <p class="muted" style="margin-top:0">فایل Excel (.xlsx) یا CSV را انتخاب کنید و بگویید هر ستون چیست. ${cfg.help}</p>
+    <p class="card-intro">فایل Excel (.xlsx) یا CSV را انتخاب کنید و بگویید هر ستون چیست. ${cfg.help}</p>
     <input type="file" id="imp-file" accept=".xlsx,.xlsm,.csv">
     <div id="imp-map"></div>
     <div id="imp-result"></div>`;
@@ -940,20 +1342,20 @@ function openImport(kind, container) {
   async function runPreview() {
     const my = ++seq;
     const out = $('#imp-result', container);
-    out.innerHTML = '<div class="muted" style="margin-top:12px">در حال بررسی…</div>';
+    out.innerHTML = '<div class="muted import-status">در حال بررسی…</div>';
     try {
       const res = await api(`/api/admin/import/${kind}`, { method: 'POST', body: { rows: dataRows(), apply: false } });
       if (my !== seq) return;
       preview = res;
       renderResult(res);
     } catch (err) {
-      if (my === seq) out.innerHTML = `<div class="void-note" style="margin-top:12px">${esc(err.message)}</div>`;
+      if (my === seq) out.innerHTML = `<div class="void-note import-status">${esc(err.message)}</div>`;
     }
   }
 
   const rowHtml = (r) => `<div class="import-row ${r.status}">
       <div class="num">ردیف ${fa(r.row)}</div>
-      <div><b>${esc(r.name) || '—'}</b>${r.value ? ` · ${esc(faDigits(r.value))}` : ''}</div>
+      <div><b>${esc(r.name) || '—'}</b>${r.value ? `، ${esc(faDigits(r.value))}` : ''}</div>
       <div class="msg">${r.message ? esc(faDigits(r.message)) : IMPORT_STATUS[r.status][0]}</div></div>`;
 
   const renderResult = (res, done = false) => {
@@ -962,16 +1364,16 @@ function openImport(kind, container) {
     const problems = res.rows.filter((r) => r.status === 'error' || r.status === 'warn');
     const rest = res.rows.filter((r) => r.status !== 'error' && r.status !== 'warn');
     $('#imp-result', container).innerHTML = `
-      ${done ? '<p class="badge credit" style="margin:12px 0 0;font-size:14px">✓ ثبت انجام شد. لیست پایین صفحه بعد از «بستن» به‌روز می‌شود.</p>' : ''}
+      ${done ? `<div class="banner import-status">${ic('check-circle')}<div class="b-title">ثبت انجام شد.</div><div class="b-body">لیست پایین صفحه بعد از «بستن» به‌روز می‌شود.</div></div>` : ''}
       <div class="import-counts">
         ${Object.entries(IMPORT_STATUS).filter(([k]) => c[k]).map(([k, [label, cls]]) => `<span class="badge ${cls}">${label}: ${fa(c[k])}</span>`).join('')}
         ${res.rows.length ? '' : '<span class="muted">ردیفی برای ورود پیدا نشد؛ ستون‌ها را بررسی کنید.</span>'}
       </div>
-      ${problems.length ? `<div class="import-list"><h3 style="margin:8px 0 0;font-size:15px">ردیف‌هایی که باید بررسی شوند (${fa(problems.length)})</h3>
+      ${problems.length ? `<div class="import-list"><h3>ردیف‌هایی که باید بررسی شوند (${fa(problems.length)})</h3>
         ${problems.map(rowHtml).join('')}
         ${c.error ? '<p class="hint">ردیف‌های مشکل‌دار ثبت نمی‌شوند؛ در فایل درست کنید و دوباره وارد کنید (ردیف‌های ثبت‌شده تکرار نمی‌شوند).</p>' : ''}</div>` : ''}
       ${rest.length ? `<details class="import-list" ${problems.length ? '' : 'open'}><summary>بقیه‌ی ردیف‌ها (${fa(rest.length)})</summary>${rest.map(rowHtml).join('')}</details>` : ''}
-      <div class="row-end" style="margin-top:12px">
+      <div class="row-end import-status">
         ${done ? '<button type="button" class="btn" data-imp="close">بستن</button>'
           : `<button type="button" class="btn" data-imp="apply" ${toApply ? '' : 'disabled'}>${toApply ? `ثبت ${fa(toApply)} ردیف` : 'تغییری برای ثبت نیست'}</button>`}
       </div>`;
@@ -982,13 +1384,13 @@ function openImport(kind, container) {
     if (e.target.id === 'imp-file') {
       const file = e.target.files[0];
       if (!file) return;
-      $('#imp-map', container).innerHTML = '<div class="muted" style="margin-top:12px">در حال خواندن فایل…</div>';
+      $('#imp-map', container).innerHTML = '<div class="muted import-status">در حال خواندن فایل…</div>';
       $('#imp-result', container).innerHTML = '';
       try {
         rows = (await api(`/api/admin/import/parse?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })).rows;
         renderMap();
       } catch (err) {
-        $('#imp-map', container).innerHTML = `<div class="void-note" style="margin-top:12px">${esc(err.message)}</div>`;
+        $('#imp-map', container).innerHTML = `<div class="void-note import-status">${esc(err.message)}</div>`;
       }
     } else if (e.target.closest('#imp-map')) runPreview();
   };
@@ -1029,7 +1431,7 @@ async function viewItems(_, alive) {
   ].filter((s) => s.list.length);
 
   view.innerHTML = `
-    <div class="page-title"><h1>کالاها</h1><button type="button" class="btn ghost small" data-open-import="items">📥 ورود از اکسل</button></div>
+    <div class="page-title"><h1>کالاها</h1><button type="button" class="btn ghost small" data-open-import="items">${ic('import')}ورود از اکسل</button></div>
     <div class="card" id="import" hidden></div>
     <div class="card" id="cats"></div>
     <div class="card">
@@ -1060,12 +1462,9 @@ async function viewItems(_, alive) {
             <div class="list-row">
               <div class="grow"><div class="title">${esc(i.name)} ${i.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div></div>
               <div class="amount">${priceHtml(i.price)}</div>
-              <div class="actions">
-                <button class="btn link small" data-edit="${i.id}">ویرایش</button>
-                <button class="btn link danger small" data-del="${i.id}">حذف</button>
-              </div>
+              ${rowActionsHtml('', i.id)}
             </div>`).join('')}
-        </div>`).join('') : '<div class="empty">هنوز کالایی تعریف نشده است.</div>'}
+        </div>`).join('') : emptyHtml('package', 'هنوز کالایی تعریف نشده است؛ با فرم بالا اولین کالا را اضافه کنید.')}
     </div>`;
 
   const form = $('#f');
@@ -1096,7 +1495,7 @@ async function viewItems(_, alive) {
     const del = e.target.closest('[data-del]');
     if (del) {
       const item = items.find((i) => i.id == del.dataset.del);
-      if (!confirm(`«${item.name}» حذف شود؟`)) return;
+      if (!await askConfirm({ title: `کالای «${item.name}» حذف شود؟`, okText: 'حذف کالا' })) return;
       try { await api(`/api/admin/items/${item.id}`, { method: 'DELETE' }); toast('حذف شد.'); route(); }
       catch (err) { toast(err.message, true); }
     }
@@ -1118,36 +1517,41 @@ async function viewItems(_, alive) {
 const hhmm = (t) => faDigits(t ?? '');
 /** Small badges for a category's rules: opening hours and staff group. */
 const categoryRulesHtml = (c) => `
-  ${c.startTime ? `<span class="badge ${c.open === false ? 'debt' : 'wait'}" title="${c.open === false ? 'الان بسته است' : 'الان باز است'}">⏰ ${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
-  ${c.personGroup ? `<span class="badge warn">👥 فقط ${esc(c.personGroup)}</span>` : ''}
-  ${c.paymentCard ? `<span class="badge zero">💳 ${esc(c.paymentCard)}</span>` : ''}`;
+  ${c.startTime ? `<span class="badge ${c.open === false ? 'debt' : 'wait'}" title="${c.open === false ? 'الان بسته است' : 'الان باز است'}">${ic('clock')}${hhmm(c.startTime)} تا ${hhmm(c.endTime)}${c.open === false ? '، بسته' : ''}</span>` : ''}
+  ${c.personGroup ? `<span class="badge warn">${ic('users')}فقط ${esc(c.personGroup)}</span>` : ''}
+  ${c.paymentCard ? `<span class="badge zero">${ic('card')}${esc(c.paymentCard)}</span>` : ''}`;
+
+/** Edit and delete icon buttons at the end of a list row; `kind` prefixes the data attributes ("cat-", "group-", …). */
+const rowActionsHtml = (kind, id, extra = '') => `
+  <div class="actions">
+    ${extra}
+    <button type="button" class="icon-btn small" data-${kind}edit="${id}" title="ویرایش" aria-label="ویرایش">${ic('pencil')}</button>
+    <button type="button" class="icon-btn small danger" data-${kind}del="${id}" title="حذف" aria-label="حذف">${ic('trash')}</button>
+  </div>`;
 
 /** "Menu categories" card on the items page: name, opening hours, staff group, bank card, order. */
 function renderCategoriesAdmin(card, categories, groups, cards) {
   let editingId = null;
   card.innerHTML = `
     <div class="card-head"><h2>دسته‌بندی منو</h2></div>
-    <p class="muted" style="margin-top:0">
-      دسته‌ی بدون زمان‌بندی همیشه باز است؛ با زمان‌بندی، همکاران فقط در همان بازه از آن درخواست می‌دهند.
-      دسته‌ای که به یک گروه پرسنلی داده شود فقط برای همان گروه نمایش داده می‌شود؛ بدون گروه، برای همه است.
-      با انتخاب کارت، بدهی خریدهای این دسته جداگانه برای همان کارت حساب می‌شود.
+    <p class="card-intro">
+      ساعت کاری: همکاران فقط در همان بازه از دسته درخواست می‌دهند (بدون ساعت، همیشه باز).
+      گروه پرسنلی: دسته فقط برای همان گروه نمایش داده می‌شود.
+      کارت: بدهی خریدهای دسته جداگانه برای همان کارت حساب می‌شود.
     </p>
     <div class="list">
       ${categories.length ? categories.map((c, i) => `
         <div class="list-row">
           <div class="grow">
             <div class="title">${esc(c.name)} ${categoryRulesHtml(c)}</div>
-            <div class="sub">${c.startTime ? '' : 'همه‌ی ساعات · '}${c.personGroup ? '' : 'برای همه · '}${fa(c.itemCount)} کالا</div>
+            ${metaHtml([c.startTime ? null : 'همه‌ی ساعات', c.personGroup ? null : 'برای همه', `${fa(c.itemCount)} کالا`])}
           </div>
-          <div class="actions">
-            <button class="btn link small" data-cat-move="${c.id}:-1" ${i === 0 ? 'disabled' : ''} title="بالاتر">▲</button>
-            <button class="btn link small" data-cat-move="${c.id}:1" ${i === categories.length - 1 ? 'disabled' : ''} title="پایین‌تر">▼</button>
-            <button class="btn link small" data-cat-edit="${c.id}">ویرایش</button>
-            <button class="btn link danger small" data-cat-del="${c.id}">حذف</button>
-          </div>
-        </div>`).join('') : '<div class="empty">هنوز دسته‌ای تعریف نشده است.</div>'}
+          ${rowActionsHtml('cat-', c.id, `
+            <button type="button" class="icon-btn small" data-cat-move="${c.id}:-1" ${i === 0 ? 'disabled' : ''} title="بالاتر" aria-label="بالاتر">${ic('chevron-up')}</button>
+            <button type="button" class="icon-btn small" data-cat-move="${c.id}:1" ${i === categories.length - 1 ? 'disabled' : ''} title="پایین‌تر" aria-label="پایین‌تر">${ic('chevron-down')}</button>`)}
+        </div>`).join('') : emptyHtml('package', 'هنوز دسته‌ای تعریف نشده است.')}
     </div>
-    <form class="form" id="cat-form" style="margin-top:12px">
+    <form class="form mt-3" id="cat-form">
       <div class="form-grid">
         <label>نام دسته<input name="name" required maxlength="40" placeholder="مثلاً صبحانه" autocomplete="off"></label>
         <label>از ساعت (اختیاری)<input name="startTime" type="time"></label>
@@ -1202,7 +1606,7 @@ function renderCategoriesAdmin(card, categories, groups, cards) {
         route();
       } else if (del) {
         const c = categories.find((x) => x.id == del.dataset.catDel);
-        if (!confirm(`دسته‌ی «${c.name}» حذف شود؟`)) return;
+        if (!await askConfirm({ title: `دسته‌ی «${c.name}» حذف شود؟`, okText: 'حذف دسته' })) return;
         await api(`/api/admin/categories/${c.id}`, { method: 'DELETE' });
         toast('دسته حذف شد.');
         route();
@@ -1228,21 +1632,19 @@ function renderGroupsAdmin(card, groups) {
   let editingId = null;
   card.innerHTML = `
     <div class="card-head"><h2>گروه‌های پرسنلی</h2></div>
-    <p class="muted" style="margin-top:0">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.</p>
+    <p class="card-intro">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.</p>
     <div class="list">
       ${groups.length ? groups.map((g) => `
         <div class="list-row">
+          <div class="icon">${ic('users')}</div>
           <div class="grow">
-            <div class="title">👥 ${esc(g.name)}</div>
-            <div class="sub">${fa(g.memberCount)} نفر${g.categoryCount ? ` · ${fa(g.categoryCount)} دسته‌ی منو` : ''}</div>
+            <div class="title">${esc(g.name)}</div>
+            ${metaHtml([`${fa(g.memberCount)} نفر`, g.categoryCount ? `${fa(g.categoryCount)} دسته‌ی منو` : null])}
           </div>
-          <div class="actions">
-            <button class="btn link small" data-group-edit="${g.id}">ویرایش</button>
-            <button class="btn link danger small" data-group-del="${g.id}">حذف</button>
-          </div>
-        </div>`).join('') : '<div class="empty">هنوز گروهی تعریف نشده است.</div>'}
+          ${rowActionsHtml('group-', g.id)}
+        </div>`).join('') : emptyHtml('users', 'هنوز گروهی تعریف نشده است.')}
     </div>
-    <form class="form" id="group-form" style="margin-top:12px">
+    <form class="form mt-3" id="group-form">
       <div class="inline-form">
         <input name="name" required maxlength="40" placeholder="نام گروه، مثلاً شیفت شب" autocomplete="off">
         <button type="button" class="btn ghost" id="group-cancel" hidden>انصراف</button>
@@ -1265,7 +1667,11 @@ function renderGroupsAdmin(card, groups) {
     const del = e.target.closest('[data-group-del]');
     if (!del) return;
     const g = groups.find((x) => x.id == del.dataset.groupDel);
-    if (!confirm(`گروه «${g.name}» حذف شود؟${g.memberCount ? ` ${fa(g.memberCount)} نفرِ آن بدون گروه می‌شوند.` : ''}`)) return;
+    if (!await askConfirm({
+      title: `گروه «${g.name}» حذف شود؟`,
+      text: g.memberCount ? `${fa(g.memberCount)} نفرِ آن بدون گروه می‌شوند.` : '',
+      okText: 'حذف گروه',
+    })) return;
     try { await api(`/api/admin/groups/${g.id}`, { method: 'DELETE' }); toast('گروه حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   };
@@ -1285,7 +1691,7 @@ async function viewPeople(_, alive) {
   const missing = people.filter((p) => p.isActive && !p.nationalCode).length;
 
   view.innerHTML = `
-    <div class="page-title"><h1>افراد</h1><button type="button" class="btn ghost small" data-open-import="people">📥 ورود از اکسل</button></div>
+    <div class="page-title"><h1>افراد</h1><button type="button" class="btn ghost small" data-open-import="people">${ic('import')}ورود از اکسل</button></div>
     <div class="card" id="import" hidden></div>
     <div class="card">
       <div class="card-head"><h2 id="form-title">شخص جدید</h2></div>
@@ -1308,21 +1714,18 @@ async function viewPeople(_, alive) {
       </form>
     </div>
     <div class="card">
-      ${missing ? `<div class="hint" style="margin-bottom:8px">${fa(missing)} نفر هنوز کد ملی ندارند و نمی‌توانند وارد شوند.</div>` : ''}
+      ${missing ? `<div class="banner warn">${ic('alert')}<div class="b-title">${fa(missing)} نفر هنوز کد ملی ندارند</div><div class="b-body">تا کد ملی ثبت نشود نمی‌توانند وارد شوند.</div></div>` : ''}
       <input class="search" id="q" placeholder="جستجوی نام یا کد ملی…" autocomplete="off">
       <div class="list" id="list">
         ${people.length ? people.map((p) => `
           <div class="list-row" data-name="${esc(p.name)} ${esc(p.nationalCode ?? '')} ${faDigits(p.nationalCode ?? '')} ${esc(groupName.get(p.groupId) ?? '')}">
             <div class="grow">
-              <div class="title">${esc(p.name)} ${p.groupId ? `<span class="badge warn">👥 ${esc(groupName.get(p.groupId))}</span>` : ''} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
-              <div class="sub">${p.nationalCode ? `کد ملی ${faDigits(p.nationalCode)}` : '<span class="void-note">بدون کد ملی</span>'}</div>
+              <div class="title">${esc(p.name)} ${p.groupId ? `<span class="badge warn">${ic('users')}${esc(groupName.get(p.groupId))}</span>` : ''} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
+              <div class="sub">${p.nationalCode ? `کد ملی ${faDigits(p.nationalCode)}` : '<span class="late">بدون کد ملی</span>'}</div>
             </div>
             ${balanceBadge(balance.get(p.id) ?? 0)}
-            <div class="actions">
-              <button class="btn link small" data-edit="${p.id}">ویرایش</button>
-              <button class="btn link danger small" data-del="${p.id}">حذف</button>
-            </div>
-          </div>`).join('') : '<div class="empty">هنوز شخصی تعریف نشده است.</div>'}
+            ${rowActionsHtml('', p.id)}
+          </div>`).join('') : emptyHtml('users', 'هنوز شخصی تعریف نشده است؛ با فرم بالا اضافه کنید یا از اکسل وارد کنید.')}
       </div>
     </div>
     <div class="card" id="groups"></div>`;
@@ -1356,7 +1759,7 @@ async function viewPeople(_, alive) {
     const del = e.target.closest('[data-del]');
     if (!del) return;
     const p = people.find((x) => x.id == del.dataset.del);
-    if (!confirm(`«${p.name}» حذف شود؟`)) return;
+    if (!await askConfirm({ title: `«${p.name}» حذف شود؟`, okText: 'حذف شخص' })) return;
     try { await api(`/api/admin/people/${p.id}`, { method: 'DELETE' }); toast('حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   });
@@ -1385,7 +1788,7 @@ async function viewSettings(_, alive) {
         <div class="card-head"><h2>تغییر رمز عبور</h2></div>
         <form class="form" id="pw">
           <label>رمز فعلی<input name="current" type="password" autocomplete="current-password" required></label>
-          <label>رمز جدید<input name="new" type="password" autocomplete="new-password" minlength="6" required></label>
+          <label>رمز جدید<input name="new" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
           <div class="row-end"><button class="btn">تغییر رمز</button></div>
         </form>
       </div>
@@ -1395,19 +1798,20 @@ async function viewSettings(_, alive) {
           ${users.map((u) => `
             <div class="list-row">
               <div class="grow"><div class="title">${esc(u.username)}</div><div class="sub">ساخته‌شده ${fmtDT(u.createdAt)}</div></div>
-              ${u.username === state.me.username ? '<span class="badge zero">شما</span>' : `<button class="btn link danger small" data-del="${u.id}">حذف</button>`}
+              ${u.username === state.me.username ? '<span class="badge zero">شما</span>' : `<button type="button" class="icon-btn small danger" data-del="${u.id}" title="حذف" aria-label="حذف ${esc(u.username)}">${ic('trash')}</button>`}
             </div>`).join('')}
         </div>
-        <form class="form" id="add" style="margin-top:12px">
-          <label>نام کاربری<input name="username" autocomplete="off" required minlength="3"></label>
-          <label>رمز عبور<input name="password" type="password" autocomplete="new-password" required minlength="6"></label>
+        <form class="form mt-3" id="add">
+          <label>نام کاربری<input name="username" autocomplete="off" required minlength="3" dir="auto"></label>
+          <label>رمز عبور<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
           <div class="row-end"><button class="btn">افزودن مسئول</button></div>
         </form>
       </div>
     </div>
+    <div class="card" id="audit"></div>
     <div class="card">
       <div class="card-head"><h2>درباره</h2>${state.me.version ? `<span class="badge zero">نسخه ${faDigits(state.me.version)}</span>` : ''}</div>
-      <p class="muted" style="margin:0">بوفه (OfficeBuffet) نرم‌افزار متن‌باز با مجوز MIT است.
+      <p class="muted">بوفه (OfficeBuffet) نرم‌افزار متن‌باز با مجوز MIT است.
         <a href="${REPO_URL}" target="_blank" rel="noopener">کد و نسخه‌های جدید در GitHub</a></p>
     </div>`;
 
@@ -1423,12 +1827,56 @@ async function viewSettings(_, alive) {
   });
   view.addEventListener('click', async (e) => {
     const del = e.target.closest('[data-del]');
-    if (!del || !confirm('این حساب حذف شود؟')) return;
+    if (!del) return;
+    const user = users.find((u) => u.id == del.dataset.del);
+    if (!await askConfirm({ title: `حساب مسئول «${user?.username ?? ''}» حذف شود؟`, okText: 'حذف حساب' })) return;
     try { await api(`/api/admin/users/${del.dataset.del}`, { method: 'DELETE' }); toast('حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   });
   renderPushCard(alive);
   renderCardsAdmin($('#cards'), alive);
+  renderAuditLog($('#audit'), alive);
+}
+
+// ---------- security log (read-only) ----------
+const AUDIT_ACTIONS = {
+  'admin.setup': 'ساخت اولین حساب مسئول',
+  'admin.login': 'ورود مسئول',
+  'admin.login_failed': 'ورود ناموفق مسئول',
+  'admin.password': 'تغییر رمز',
+  'admin.password_failed': 'رمز فعلی اشتباه (تغییر رمز)',
+  'admin.user_create': 'افزودن حساب مسئول',
+  'admin.user_delete': 'حذف حساب مسئول',
+  'employee.login': 'ورود همکار',
+  'employee.login_failed': 'ورود ناموفق با کد ملی',
+  'card.create': 'افزودن کارت',
+  'card.update': 'تغییر کارت',
+  'card.delete': 'حذف کارت',
+  'item.price': 'تغییر قیمت',
+  'person.code': 'تغییر کد ملی',
+  'person.activate': 'فعال‌کردن شخص',
+  'person.deactivate': 'غیرفعال‌کردن شخص',
+  'import.items': 'ورود کالاها از فایل',
+  'import.people': 'ورود افراد از فایل',
+};
+const AUDIT_WARN = new Set(['admin.login_failed', 'employee.login_failed', 'admin.password_failed', 'card.update', 'card.delete', 'admin.user_create', 'admin.user_delete']);
+
+/** Who logged in from where, and every change to cards, accounts, prices and national codes. Nothing here can be edited. */
+async function renderAuditLog(card, alive) {
+  const rows = await api('/api/admin/audit');
+  if (!alive()) return;
+  card.innerHTML = `
+    <div class="card-head"><h2>${ic('alert')}رویدادهای امنیتی</h2></div>
+    <p class="card-intro">ورودها و تغییر کارت‌ها، حساب‌ها، قیمت‌ها و کدهای ملی. این فهرست قابل ویرایش یا حذف نیست.
+      اگر ورودی به نام همکاری می‌بینید که او انجام نداده، کد ملی‌اش را عوض کنید.</p>
+    ${rows.length ? `<div class="list">${rows.map((r) => `
+      <div class="list-row">
+        <div class="grow">
+          <div class="title">${AUDIT_WARN.has(r.action) ? `<span class="badge warn">${esc(AUDIT_ACTIONS[r.action] ?? r.action)}</span>` : esc(AUDIT_ACTIONS[r.action] ?? r.action)}
+            <bdi>${esc(r.actor)}</bdi></div>
+          ${metaHtml([fmtDT(r.at), r.ip ? `<bdi dir="ltr">${esc(r.ip)}</bdi>` : null, r.details ? `<bdi>${esc(r.details)}</bdi>` : null])}
+        </div>
+      </div>`).join('')}</div>` : emptyHtml('check-circle', 'هنوز رویدادی ثبت نشده است.')}`;
 }
 
 // ---------- bank cards colleagues pay into ----------
@@ -1468,18 +1916,16 @@ async function renderCardsAdmin(card, alive) {
   let editingId = null;
   card.innerHTML = `
     <div class="card-head"><h2>شماره کارت‌ها</h2></div>
-    <p class="muted" style="margin-top:0">کارت‌هایی که همکاران به آن‌ها پرداخت می‌کنند. در «حساب من» هر همکار، زیر مانده‌ی حساب، با عنوانشان نمایش داده می‌شوند و با یک ضربه کپی می‌شوند.</p>
+    <p class="card-intro">کارت‌هایی که همکاران به آن‌ها پرداخت می‌کنند. در «حساب من» هر همکار، زیر مانده‌ی حساب، با عنوانشان نمایش داده می‌شوند و با یک ضربه کپی می‌شوند.</p>
     <div class="list">
       ${cards.length ? cards.map((c) => `
         <div class="list-row">
-          <div class="grow"><div class="title">${esc(c.title)}</div><div class="sub card-no">${cardNumberText(c.number)}</div></div>
-          <div class="actions">
-            <button class="btn link small" data-card-edit="${c.id}">ویرایش</button>
-            <button class="btn link danger small" data-card-del="${c.id}">حذف</button>
-          </div>
-        </div>`).join('') : '<div class="empty">هنوز کارتی تعریف نشده است.</div>'}
+          <div class="icon">${ic('card')}</div>
+          <div class="grow"><div class="title">${esc(c.title)}</div><div class="card-no">${cardNumberText(c.number)}</div></div>
+          ${rowActionsHtml('card-', c.id)}
+        </div>`).join('') : emptyHtml('card', 'هنوز کارتی تعریف نشده است.')}
     </div>
-    <form class="form" id="card-form" style="margin-top:12px">
+    <form class="form mt-3" id="card-form">
       <div class="form-grid two">
         <label>عنوان کارت<input name="title" maxlength="60" required placeholder="مثلاً کارت صبحانه" autocomplete="off"></label>
         <label>شماره کارت<input name="number" inputmode="numeric" maxlength="25" required placeholder="۱۶ رقم" autocomplete="off" class="code-input"></label>
@@ -1505,7 +1951,11 @@ async function renderCardsAdmin(card, alive) {
     const del = e.target.closest('[data-card-del]');
     if (!del) return;
     const c = cards.find((x) => x.id == del.dataset.cardDel);
-    if (!confirm(`کارت «${c.title}» حذف شود؟\nدسته‌ها و پرداخت‌هایی که به این کارت وصل‌اند «بدون کارت» می‌شوند (جمع بدهی‌ها تغییری نمی‌کند).`)) return;
+    if (!await askConfirm({
+      title: `کارت «${c.title}» حذف شود؟`,
+      text: 'دسته‌ها و پرداخت‌هایی که به این کارت وصل‌اند «بدون کارت» می‌شوند (جمع بدهی‌ها تغییری نمی‌کند).',
+      okText: 'حذف کارت',
+    })) return;
     try { await api(`/api/admin/cards/${c.id}`, { method: 'DELETE' }); toast('کارت حذف شد.'); renderCardsAdmin(card, alive); }
     catch (err) { toast(err.message, true); }
   };
@@ -1515,7 +1965,11 @@ async function renderCardsAdmin(card, alive) {
     try { await save(); }
     catch (err) {
       // Number fails the check digit: probably a typo, but let the manager keep it if they are sure.
-      if (!err.data?.confirm || !confirm(`${err.message}\n\nشماره را دوباره نگاه کنید. اگر مطمئنید درست است، «OK» را بزنید تا ثبت شود.`)) throw err;
+      if (!err.data?.confirm || !await askConfirm({
+        title: 'شماره کارت معتبر به نظر نمی‌رسد',
+        text: `${err.message}\n\nشماره را دوباره نگاه کنید. اگر مطمئنید درست است، «با همین شماره ثبت شود» را بزنید.`,
+        okText: 'با همین شماره ثبت شود', danger: false,
+      })) throw err;
       body.force = true;
       await save();
     }
@@ -1542,7 +1996,7 @@ async function viewPrices(_, alive) {
   const items = menu.flatMap((s) => s.items);
   const cart = new Map();
   // During a settlement drive someone who owes money can't send requests (the server refuses them too).
-  const blocked = balance.drive.active && balance.total > 0;
+  const blocked = balance.drive.active && balance.due > 0;
 
   // Opening hours are in office (server) time; measure this device's clock against it once, so sections
   // open and close on time while the page stays open.
@@ -1563,34 +2017,17 @@ async function viewPrices(_, alive) {
     <div class="card" id="push" hidden></div>
     <div class="card">
       ${items.length ? `
-        <p class="muted" style="margin-top:0">تعداد را انتخاب کنید و «ارسال درخواست» را بزنید تا مسئول بوفه باخبر شود.</p>
+        <p class="card-intro">تعداد را انتخاب کنید و «ارسال درخواست» را بزنید تا مسئول بوفه باخبر شود.</p>
         ${menu.map(({ category: c, items: list }, n) => `
           <section class="menu-section" data-section="${n}">
           <div class="cat-title">${esc(c.name)}
-            ${c.startTime ? `<span class="badge wait">⏰ ${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
-            <span class="closed-note">الان بسته است؛ سفارش از ساعت ${hhmm(c.startTime)}</span>
+            ${c.startTime ? `<span class="badge wait">${ic('clock')}${hhmm(c.startTime)} تا ${hhmm(c.endTime)}</span>` : ''}
+            <span class="closed-note badge debt">بسته است؛ سفارش از ساعت ${hhmm(c.startTime)}</span>
           </div>
-          <div class="items-grid">
-            ${list.map((i) => `
-              <div class="item-tile" data-item="${i.id}">
-                <div class="name">${esc(i.name)}</div>
-                <div class="price">${priceHtml(i.price)}</div>
-                <div class="stepper">
-                  <button type="button" data-step="-1" aria-label="کم کردن">−</button>
-                  <span class="qty">۰</span>
-                  <button type="button" data-step="1" aria-label="اضافه کردن">+</button>
-                </div>
-              </div>`).join('')}
-          </div>
+          <div class="items-grid">${list.map(itemTileHtml).join('')}</div>
           </section>`).join('')}
-        <label style="margin-top:14px">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً کم‌شیرین، اتاق ۲۰۳"></label>
-        <div class="order-bar">
-          <div><div class="pending-count" id="cnt"></div><div class="total" id="tot"></div></div>
-          <div class="order-actions">
-            <button type="button" class="btn ghost" id="clear-cart" hidden title="صفر کردن همه‌ی اقلام انتخاب‌شده">🗑️ خالی کردن</button>
-            <button class="btn" id="submit">ارسال درخواست</button>
-          </div>
-        </div>` : '<div class="empty">هنوز کالایی تعریف نشده است.</div>'}
+        <label class="note-field">توضیح (اختیاری)<input id="note" maxlength="200" placeholder="مثلاً کم‌شیرین، اتاق ۲۰۳"></label>
+        ${orderBarHtml('ارسال درخواست')}` : emptyHtml('coffee', 'هنوز کالایی در منو نیست.')}
     </div>
     <div class="card"><div class="card-head"><h2>درخواست‌های من</h2></div><div class="list" id="mine"></div></div>`;
 
@@ -1600,7 +2037,7 @@ async function viewPrices(_, alive) {
     $('#cnt').textContent = count ? `${fa(count)} قلم انتخاب شده` : 'هنوز چیزی انتخاب نشده';
     $('#tot').innerHTML = money(sum(lines, ([id, q]) => items.find((i) => i.id === id).price * q));
     $('#submit').disabled = count === 0 || blocked;
-    if (blocked) $('#submit').textContent = 'تا تسویه، ارسال ممکن نیست';
+    if (blocked) $('#submit').textContent = 'اول تسویه کنید';
     $('#clear-cart').hidden = count === 0;
   };
   const clearCart = () => {
@@ -1642,22 +2079,22 @@ async function viewPrices(_, alive) {
     if (answered.length) {
       // One toast for everything answered since the last refresh (a second toast would replace the first).
       toast(answered.map((r) => (r.status === 'done'
-        ? `☕ درخواستت (${linesText(r.lines)}) دیده شد و تا دقایقی دیگر آماده می‌شود.`
-        : `✋ درخواستت (${linesText(r.lines)}) رد شد${r.rejectReason ? `؛ دلیل: ${r.rejectReason}` : ''}.`)).join('\n'),
+        ? `درخواستت (${linesText(r.lines)}) دیده شد و تا دقایقی دیگر آماده می‌شود.`
+        : `درخواستت (${linesText(r.lines)}) رد شد${r.rejectReason ? `؛ دلیل: ${r.rejectReason}` : ''}.`)).join('\n'),
         answered.some((r) => r.status === 'rejected'));
       beep();
     }
     $('#mine').innerHTML = mine.length ? mine.map((r) => `
-      <div class="list-row">
+      <div class="list-row request-row">
         <div class="grow">
-          ${linesHtml(r.lines)}
-          ${r.editedAt ? '<span class="badge warn">✏️ مسئول بوفه تغییرش داد</span>' : ''}
-          <div class="sub">${fmtDT(r.createdAt)}${r.note ? ' · ' + esc(r.note) : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}${r.status === 'pending' && r.remindCount ? ` · ${fa(r.remindCount)} بار تلنگر زدی` : ''}</div>
+          <div class="title">${linesHtml(r.lines)}</div>
+          ${r.editedAt ? `<div><span class="badge warn">${ic('pencil')}مسئول بوفه تغییرش داد</span></div>` : ''}
+          ${metaHtml([fmtDT(r.createdAt), r.note ? esc(r.note) : null, r.rejectReason ? 'دلیل: ' + esc(r.rejectReason) : null,
+            r.status === 'pending' && r.remindCount ? `${fa(r.remindCount)} بار تلنگر زدی` : null])}
         </div>
         ${statusBadge(r.status)}
-        ${r.status === 'pending' ? remindButton(r) : ''}
-        ${r.status === 'pending' ? `<button class="btn link danger small" data-cancel="${r.id}">لغو</button>` : ''}
-      </div>`).join('') : '<div class="empty">هنوز درخواستی نفرستاده‌اید.</div>';
+        ${r.status === 'pending' ? `<div class="actions">${remindButton(r)}<button class="btn link danger small" data-cancel="${r.id}">لغو درخواست</button></div>` : ''}
+      </div>`).join('') : emptyHtml('inbox', 'هنوز درخواستی نفرستاده‌اید.');
     tickReminders();
   };
 
@@ -1665,15 +2102,15 @@ async function viewPrices(_, alive) {
   const REMIND_EVERY_MS = 2 * 60 * 1000;
   const MAX_REMINDERS = 2;
   const remindButton = (r) => {
-    if (r.remindCount >= MAX_REMINDERS) return '<span class="nudge-done">🚶 به نظر می‌رسه سرش شلوغه؛ یه سر حضوری بزن!</span>';
+    if (r.remindCount >= MAX_REMINDERS) return '<span class="nudge-done">به نظر می‌رسه سرش شلوغه؛ یه سر حضوری بزن!</span>';
     const at = new Date(r.remindedAt || r.createdAt).getTime() + REMIND_EVERY_MS;
-    return `<button class="btn ghost small nudge" data-remind="${r.id}" data-remind-at="${at}" title="دوباره به مسئول بوفه خبر بده">👋 یه تلنگر بزن!</button>`;
+    return `<button class="btn ghost small nudge" data-remind="${r.id}" data-remind-at="${at}" title="دوباره به مسئول بوفه خبر بده">${ic('bell-ring')}یه تلنگر بزن!</button>`;
   };
   const tickReminders = () => {
     view.querySelectorAll('[data-remind-at]').forEach((b) => {
       const left = Math.ceil((Number(b.dataset.remindAt) - Date.now()) / 1000);
       b.disabled = left > 0;
-      b.textContent = left > 0 ? `⏳ ${faDigits(`${Math.floor(left / 60)}:${pad2(left % 60)}`)}` : '👋 یه تلنگر بزن!';
+      b.innerHTML = left > 0 ? `${ic('timer')}${faDigits(`${Math.floor(left / 60)}:${pad2(left % 60)}`)}` : `${ic('bell-ring')}یه تلنگر بزن!`;
     });
   };
   const ticker = setInterval(() => (alive() ? tickReminders() : clearInterval(ticker)), 1000);
@@ -1696,8 +2133,8 @@ async function viewPrices(_, alive) {
       try {
         const res = await api(`/api/requests/${remind.dataset.remind}/remind`, { method: 'POST' });
         toast(res.remindCount >= MAX_REMINDERS
-          ? '👋 تلنگر دوم هم زده شد! اگه باز خبری نشد، به نظر می‌رسه باید یه سر حضوری بزنی.'
-          : '👋 تلنگر زده شد! مسئول بوفه دوباره خبردار شد.');
+          ? 'تلنگر دوم هم زده شد! اگه باز خبری نشد، به نظر می‌رسه باید یه سر حضوری بزنی.'
+          : 'تلنگر زده شد! مسئول بوفه دوباره خبردار شد.');
       } catch (err) { toast(err.message, true); }
       renderMine();
       return;
@@ -1709,7 +2146,7 @@ async function viewPrices(_, alive) {
     }
     const cancel = e.target.closest('[data-cancel]');
     if (cancel) {
-      if (!confirm('این درخواست لغو شود؟')) return;
+      if (!await askConfirm({ title: 'این درخواست لغو شود؟', okText: 'لغو درخواست' })) return;
       try { await api(`/api/requests/${cancel.dataset.cancel}/cancel`, { method: 'POST' }); toast('درخواست لغو شد.'); renderMine(); }
       catch (err) { toast(err.message, true); }
       return;
@@ -1747,28 +2184,27 @@ async function viewRequests(tab, alive) {
   view.innerHTML = `
     <div class="page-title"><h1>درخواست‌ها</h1></div>
     <div class="card" id="push" hidden></div>
-    <div class="chips">
-      <a class="chip ${done ? '' : 'active'}" href="#/requests">در انتظار${data.pending.length ? ` (${fa(data.pending.length)})` : ''}</a>
-      <a class="chip ${done ? 'active' : ''}" href="#/requests/done">رسیدگی‌شده${data.recent.length ? ` (${fa(data.recent.length)})` : ''}</a>
-    </div>
+    <nav class="segmented" aria-label="وضعیت درخواست‌ها">
+      <a class="${done ? '' : 'active'}" href="#/requests" ${done ? '' : 'aria-current="page"'}>در انتظار <span class="n">${fa(data.pending.length)}</span></a>
+      <a class="${done ? 'active' : ''}" href="#/requests/done" ${done ? 'aria-current="page"' : ''}>رسیدگی‌شده <span class="n">${fa(data.recent.length)}</span></a>
+    </nav>
     ${done ? '' : `<div class="card">
       <div class="list">
         ${data.pending.length ? data.pending.map((r) => `
           <div class="list-row request-row" data-request="${r.id}">
             <div class="grow">
               <div class="title">${esc(r.personName)} ${editedBadge(r)}</div>
+              ${metaHtml([fmtDT(r.createdAt), r.remindCount ? `<span class="late">${ic('bell-ring', 'sm')} ${fa(r.remindCount)} بار تلنگر زده، آخرین ${fmtDT(r.remindedAt)}</span>` : null])}
               <div class="req-lines">${linesHtml(r.lines, true)}</div>
-              ${r.note ? `<div class="req-note">📝 ${esc(r.note)}</div>` : ''}
-              <div class="sub">${fmtDT(r.createdAt)}</div>
-              ${r.remindCount ? `<div class="sub"><span class="badge warn">👋 ${fa(r.remindCount)} بار تلنگر زده · آخرین ${fmtDT(r.remindedAt)}</span></div>` : ''}
+              ${r.note ? `<div><span class="req-note">${ic('note')}${esc(r.note)}</span></div>` : ''}
             </div>
             <div class="amount">${money(estimate(r))}</div>
-            <div class="actions">
-              <button class="btn small" data-accept="${r.id}">ثبت سفارش</button>
-              <button class="btn link small" data-edit-request="${r.id}">✏️ ویرایش</button>
-              <button class="btn link danger small" data-reject="${r.id}">رد</button>
+            <div class="actions req-actions">
+              <button class="btn" data-accept="${r.id}">${ic('check')}تأیید و ثبت</button>
+              <button class="btn secondary" data-edit-request="${r.id}">${ic('pencil')}ویرایش</button>
+              <button class="btn link danger" data-reject="${r.id}">${ic('x-circle')}رد</button>
             </div>
-          </div>`).join('') : '<div class="empty">درخواستی در انتظار نیست.</div>'}
+          </div>`).join('') : emptyHtml('inbox', 'درخواستی در انتظار نیست. درخواست‌های تازه اینجا می‌آیند و صدا پخش می‌شود.')}
       </div>
     </div>`}
     ${done ? `
@@ -1779,12 +2215,12 @@ async function viewRequests(tab, alive) {
               <div class="grow">
                 <div class="title">${esc(r.personName)} ${editedBadge(r)}</div>
                 ${linesHtml(r.lines)}
-                <div class="sub">${fmtDT(r.handledAt || r.createdAt)}${r.handledBy ? ` · ${esc(r.handledBy)}` : ''}${r.rejectReason ? ' · دلیل: ' + esc(r.rejectReason) : ''}</div>
+                ${metaHtml([fmtDT(r.handledAt || r.createdAt), r.handledBy ? esc(r.handledBy) : null, r.rejectReason ? 'دلیل: ' + esc(r.rejectReason) : null])}
               </div>
               ${statusBadge(r.status)}
               ${r.status === 'done' || r.status === 'rejected'
-                ? `<button class="btn link small" data-reopen="${r.id}:${r.status}" title="برگرداندن به «در انتظار» برای ویرایش و تأیید دوباره">↩️ ${r.status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>` : ''}
-            </div>`).join('') : '<div class="empty">هنوز درخواستی رسیدگی نشده است.</div>'}
+                ? `<button class="btn link small" data-reopen="${r.id}:${r.status}" title="برگرداندن به «در انتظار» برای ویرایش و تأیید دوباره">${ic('undo', 'flip')}${r.status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>` : ''}
+            </div>`).join('') : emptyHtml('inbox', 'هنوز درخواستی رسیدگی نشده است.')}
         </div>
       </div>` : ''}`;
 
@@ -1814,7 +2250,11 @@ async function viewRequests(tab, alive) {
       const text = status === 'done'
         ? 'سفارش‌هایی که این درخواست ساخته بود ابطال می‌شوند (در سابقه می‌مانند) و درخواست به «در انتظار» برمی‌گردد تا ویرایش و دوباره تأیید کنید. ادامه می‌دهید؟'
         : 'این درخواست ردشده به «در انتظار» برمی‌گردد. ادامه می‌دهید؟';
-      if (!confirm(text)) return;
+      if (!await askConfirm({
+        title: status === 'done' ? 'تأیید این درخواست برگردانده شود؟' : 'این درخواست به «در انتظار» برگردد؟',
+        text: text.replace(/ ادامه می‌دهید؟$/, ''),
+        okText: status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن', danger: status === 'done',
+      })) return;
       try {
         await api(`/api/admin/requests/${id}/reopen`, { method: 'POST' });
         toast('درخواست به «در انتظار» برگشت.');
@@ -1842,22 +2282,22 @@ async function viewRequests(tab, alive) {
           <div class="req-edit-line">
             <span class="n">${esc(l.name)}</span>
             <div class="stepper">
-              <button type="button" data-ed-step="${id}:-1" aria-label="کم کردن">−</button>
+              <button type="button" class="plus" data-ed-step="${id}:1" aria-label="اضافه کردن">${ic('plus')}</button>
               <span class="qty">${fa(l.qty)}</span>
-              <button type="button" data-ed-step="${id}:1" aria-label="اضافه کردن">+</button>
+              <button type="button" data-ed-step="${id}:-1" aria-label="کم کردن">${ic('minus')}</button>
             </div>
-            <button type="button" class="btn link danger small" data-ed-remove="${id}" title="حذف این قلم">✕</button>
+            <button type="button" class="icon-btn small danger" data-ed-remove="${id}" title="حذف این قلم" aria-label="حذف این قلم">${ic('trash')}</button>
           </div>`).join('') || '<div class="muted">هیچ قلمی نمانده؛ یک قلم اضافه کنید یا درخواست را رد کنید.</div>'}
-        <div class="inline-form" style="margin-top:8px">
-          <select data-ed-add>
-            <option value="">➕ افزودن قلم…</option>
+        <div class="inline-form">
+          <select data-ed-add aria-label="افزودن قلم">
+            <option value="">افزودن قلم…</option>
             ${choices.filter((i) => !lines.has(i.id)).map((i) => `<option value="${i.id}">${esc(i.name)}${i.category ? ` (${esc(i.category)})` : ''}</option>`).join('')}
           </select>
         </div>
-        <div class="row-end" style="margin-top:10px">
+        <div class="row-end">
           <button type="button" class="btn ghost small" data-ed-cancel>انصراف</button>
-          <button type="button" class="btn ghost small" data-ed-save>ذخیره</button>
-          <button type="button" class="btn small" data-ed-save-accept>ذخیره و ثبت سفارش</button>
+          <button type="button" class="btn secondary small" data-ed-save>ذخیره</button>
+          <button type="button" class="btn small" data-ed-save-accept>${ic('check')}ذخیره و تأیید</button>
         </div>`;
     };
     render();
@@ -1902,9 +2342,9 @@ async function viewRequests(tab, alive) {
   renderPushCard(alive, { hideWhenOn: true });
 }
 
-/** "✏️ ویرایش‌شده" when the manager changed a request's lines. */
+/** "ویرایش‌شده" badge when the manager changed a request's lines. */
 const editedBadge = (r) => (r.editedAt
-  ? `<span class="badge warn" title="${fmtDT(r.editedAt)}">✏️ ویرایش‌شده${r.editedBy ? ` توسط ${esc(r.editedBy)}` : ''}</span>` : '');
+  ? `<span class="badge warn" title="${fmtDT(r.editedAt)}">${ic('pencil')}ویرایش‌شده${r.editedBy ? ` توسط ${esc(r.editedBy)}` : ''}</span>` : '');
 
 // ---------- push notifications (admin device) ----------
 const pushSupported = () => window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1916,7 +2356,7 @@ async function currentPushSubscription() {
   return reg.pushManager.getSubscription();
 }
 
-const chimeButton = '<button type="button" class="btn ghost small" data-chime>🔔 پخش صدای هشدار</button>';
+const chimeButton = `<button type="button" class="btn ghost small" data-chime>${ic('bell-ring')}پخش صدای هشدار</button>`;
 document.addEventListener('click', (e) => { if (e.target.closest('[data-chime]')) beep(); });
 
 /**
@@ -1930,8 +2370,8 @@ async function renderPushCard(alive, { card = $('#push'), hideWhenOn = false } =
   if (!pushSupported()) {
     const ios = /iphone|ipad/i.test(navigator.userAgent);
     card.hidden = false;
-    card.innerHTML = `<div class="card-head"><h2>اعلان روی گوشی</h2></div>
-      <p class="muted" style="margin:0">${!window.isSecureContext
+    card.innerHTML = `<div class="card-head"><h2>${ic('bell')}اعلان روی گوشی</h2></div>
+      <p class="card-intro">${!window.isSecureContext
         ? `اعلان روی گوشی فقط وقتی کار می‌کند که برنامه با آدرس <b>https</b> باز شود. ${admin ? 'تا آن موقع، وقتی برنامه باز است درخواست‌های جدید با صدا و پیام اطلاع داده می‌شوند.' : 'تا آن موقع، وقتی همین صفحه باز است جواب درخواست‌ها با پیام اطلاع داده می‌شود.'}`
         : ios ? 'در آیفون، اول برنامه را از منوی Share با «Add to Home Screen» به صفحه‌ی اصلی اضافه کنید و از همان‌جا باز کنید.'
           : 'این مرورگر از اعلان پشتیبانی نمی‌کند.'}</p>
@@ -1944,8 +2384,8 @@ async function renderPushCard(alive, { card = $('#push'), hideWhenOn = false } =
   if (on) api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() }).catch(() => {}); // keep the server in sync
   card.hidden = on && hideWhenOn;
   if (card.hidden) { card.innerHTML = ''; return; }
-  card.innerHTML = `<div class="card-head"><h2>اعلان روی این دستگاه</h2>${on ? '<span class="badge credit">فعال</span>' : ''}</div>
-    <p class="muted" style="margin-top:0">${on
+  card.innerHTML = `<div class="card-head"><h2>${ic('bell')}اعلان روی این دستگاه</h2>${on ? '<span class="badge credit">فعال</span>' : ''}</div>
+    <p class="card-intro">${on
       ? (admin ? 'وقتی کسی درخواست بفرستد، روی این دستگاه اعلان می‌آید؛ حتی اگر برنامه بسته باشد.'
         : 'وقتی درخواستت دیده و آماده شود یا رد شود، روی همین گوشی خبردار می‌شوی؛ حتی اگر برنامه بسته باشد.')
       : Notification.permission === 'denied'
@@ -1953,11 +2393,11 @@ async function renderPushCard(alive, { card = $('#push'), hideWhenOn = false } =
         : `${admin ? 'با فعال‌سازی، درخواست‌های جدید روی این گوشی یا کامپیوتر اعلان می‌شوند؛ حتی وقتی برنامه بسته است.'
           : 'با فعال‌سازی، وقتی مسئول بوفه درخواستت را ببیند و ثبت کند (یا با دلیل رد کند) روی همین گوشی خبردار می‌شوی.'}
           ${hideWhenOn ? `بعد از فعال‌سازی، این بخش به صفحه‌ی «${settingsPage}» می‌رود.` : ''}`}</p>
-    ${on && admin && /android/i.test(navigator.userAgent) ? `<p class="hint" style="margin-top:0">برای صدای مخصوص اعلان در اندروید: تنظیمات گوشی ← برنامه‌ها ← «بوفه» (یا Chrome) ← اعلان‌ها ← صدا.</p>` : ''}
+    ${on && admin && /android/i.test(navigator.userAgent) ? `<p class="hint">برای صدای مخصوص اعلان در اندروید: تنظیمات گوشی ← برنامه‌ها ← «بوفه» (یا Chrome) ← اعلان‌ها ← صدا.</p>` : ''}
     <div class="row-end">
       ${admin ? chimeButton : ''}
       ${on ? `<button class="btn ghost small" id="push-off">غیرفعال کردن</button>${admin ? '<button class="btn small" id="push-test">ارسال اعلان آزمایشی</button>' : ''}`
-        : Notification.permission === 'denied' ? '' : '<button class="btn" id="push-on">فعال‌سازی اعلان</button>'}
+        : Notification.permission === 'denied' ? '' : `<button class="btn" id="push-on">${ic('bell')}فعال‌سازی اعلان</button>`}
     </div>`;
   card.onclick = async (e) => {
     const btn = e.target.closest('button');
@@ -2002,27 +2442,36 @@ async function disablePush() {
 
 // While an admin page is open: badge on the tab, plus a sound and message when a new request arrives.
 let lastRequestId = null;
-function setRequestBadge(count) {
-  state.pendingRequests = count;
-  const badge = $('#tabs .tab-badge');
+let lastClaimId = null;
+/** Count badge on a tab: "requests" (waiting requests) or "claims" (receipts waiting for review, on the payments tab). */
+function setTabBadge(kind, count) {
+  if (kind === 'requests') state.pendingRequests = count; else state.pendingClaims = count;
+  const badge = $(`#tabs [data-badge="${kind}"]`);
   if (badge) { badge.textContent = fa(count); badge.hidden = !count; }
 }
+const setRequestBadge = (count) => setTabBadge('requests', count);
 
 let lastReminder = null;
 async function pollRequests() {
   if (!isAdmin() || document.hidden) return;
   try {
-    const { count, latestId, lastReminder: reminder } = await api('/api/admin/requests/pending');
+    const { count, latestId, lastReminder: reminder, claims, latestClaimId } = await api('/api/admin/requests/pending');
     setRequestBadge(count);
+    setTabBadge('claims', claims);
     const isNew = lastRequestId !== null && latestId > lastRequestId;
     // An employee pressed "nudge" on a request that is still waiting.
     const nudged = lastRequestId !== null && reminder && reminder !== lastReminder;
     if (isNew || nudged) {
-      toast(isNew ? 'درخواست جدید رسید.' : '👋 یک نفر هنوز منتظر درخواستش است!');
+      toast(isNew ? 'درخواست جدید رسید.' : 'یک نفر هنوز منتظر درخواستش است!');
       beep();
       if (location.hash.startsWith('#/requests')) route();
+    } else if (lastClaimId !== null && latestClaimId > lastClaimId) {
+      // A receipt is not urgent like an order: a message and the badge, no sound.
+      toast('یک فیش پرداخت برای بررسی رسید.');
+      state.refreshClaims?.();
     }
     lastRequestId = Math.max(lastRequestId ?? 0, latestId);
+    lastClaimId = Math.max(lastClaimId ?? 0, latestClaimId);
     lastReminder = reminder;
   } catch { /* offline: try again on the next tick */ }
 }
@@ -2072,33 +2521,123 @@ function beep() {
 const routes = {
   report: viewReport, person: viewPerson, me: viewPerson, login: viewLogin, prices: viewPrices, requests: viewRequests,
   order: viewOrder, payments: viewPayments, items: viewItems, people: viewPeople, settings: viewSettings,
+  pay: viewPay, claims: viewClaims,
 };
-const adminOnly = new Set(['report', 'person', 'order', 'requests', 'payments', 'items', 'people', 'settings']);
-const employeeOnly = new Set(['prices']);
+const adminOnly = new Set(['report', 'person', 'order', 'requests', 'payments', 'claims', 'items', 'people', 'settings']);
+const employeeOnly = new Set(['prices', 'pay']);
 const homeHash = () => (isAdmin() ? '#/order' : isEmployee() ? '#/me' : '#/login');
 let routeSeq = 0;
 
 const REPO_URL = 'https://github.com/Mohamadkhadem/OfficeBuffet';
 /** Small "OfficeBuffet v1.0.0" line linking to the project, shown under login and account pages. */
 const versionLine = () => (state.me.version
-  ? `<p class="version-line"><a href="${REPO_URL}" target="_blank" rel="noopener">بوفه · نسخه ${faDigits(state.me.version)}</a></p>` : '');
+  ? `<p class="version-line"><a href="${REPO_URL}" target="_blank" rel="noopener">بوفه، نسخه ${faDigits(state.me.version)}</a></p>` : '');
 
 async function refreshMe() {
   try { state.me = await api('/api/auth/me'); } catch { state.me = { loggedIn: false }; }
 }
 
+/**
+ * Destinations per role, most used first (the first is the rightmost in the phone's bottom bar).
+ * `primary` ones are in the manager's bottom bar; the others sit behind «بیشتر» on phones and under
+ * «گزارش و مدیریت» in the wide-screen sidebar. `short` is the label under the icon on phones.
+ */
+const NAV = {
+  admin: [
+    { key: 'order', label: 'ثبت سفارش', short: 'سفارش', icon: 'receipt', primary: true },
+    { key: 'requests', label: 'درخواست‌ها', icon: 'inbox', primary: true, badge: 'requests' },
+    { key: 'claims', label: 'بررسی فیش‌ها', short: 'فیش‌ها', icon: 'image', primary: true, badge: 'claims' },
+    { key: 'payments', label: 'پرداخت و تسویه', short: 'پرداخت', icon: 'wallet', primary: true },
+    { key: 'report', label: 'گزارش', icon: 'chart', hint: 'مصرف، پرداخت و مانده‌ی همه' },
+    { key: 'items', label: 'کالاها', icon: 'package', hint: 'منو، دسته‌ها و قیمت‌ها' },
+    { key: 'people', label: 'افراد', icon: 'users', hint: 'همکاران و گروه‌های پرسنلی' },
+    { key: 'settings', label: 'تنظیمات', icon: 'sliders', hint: 'کارت‌ها، اعلان و حساب‌های مسئول' },
+  ],
+  employee: [
+    { key: 'prices', label: 'قیمت و درخواست', short: 'منو', icon: 'coffee', primary: true },
+    { key: 'pay', label: 'ثبت فیش', icon: 'image', primary: true },
+    { key: 'me', label: 'حساب من', icon: 'user', primary: true },
+  ],
+};
+
+const logoutButton = (cls = 'icon-btn') => `<button type="button" class="${cls}" data-logout title="خروج" aria-label="خروج">${ic('logout', 'flip')}${cls.includes('btn ') ? 'خروج' : ''}</button>`;
+
 function renderShell(active) {
-  const tabs = isAdmin()
-    ? [['order', 'ثبت سفارش'], ['requests', 'درخواست‌ها'], ['report', 'گزارش'], ['payments', 'پرداخت و تسویه'], ['items', 'کالاها'], ['people', 'افراد'], ['settings', 'تنظیمات']]
-    : isEmployee() ? [['me', 'حساب من'], ['prices', 'قیمت و درخواست']] : [];
-  $('#tabs').hidden = tabs.length === 0;
+  const role = isAdmin() ? 'admin' : isEmployee() ? 'employee' : '';
+  const items = NAV[role] ?? [];
+  const nav = $('#tabs');
+  document.body.dataset.role = role;
+  document.body.classList.toggle('has-nav', items.length > 0);
+  nav.hidden = items.length === 0;
+  $('.topbar .brand').setAttribute('href', homeHash());
+  if ($('#more-sheet').open) $('#more-sheet').close();
+
   const current = active === 'person' ? 'report' : active;
-  const count = state.pendingRequests || 0;
-  $('#tabs').innerHTML = tabs.map(([k, l]) => `<a href="#/${k}" class="${k === current ? 'active' : ''}">${l}${
-    k === 'requests' ? `<span class="tab-badge"${count ? '' : ' hidden'}>${fa(count)}</span>` : ''}</a>`).join('');
-  $('#account').innerHTML = state.me.loggedIn
-    ? `<span class="muted">${esc(isAdmin() ? state.me.username : state.me.personName)}</span><button class="btn ghost small" id="logout">خروج</button>`
-    : '';
+  const inMore = items.some((i) => !i.primary && i.key === current);
+  const who = esc(isAdmin() ? state.me.username : state.me.personName);
+  const badge = (kind) => {
+    const count = (kind === 'requests' ? state.pendingRequests : state.pendingClaims) || 0;
+    return `<span class="tab-badge" data-badge="${kind}"${count ? '' : ' hidden'}>${fa(count)}</span>`;
+  };
+  const link = (i) => `<a href="#/${i.key}" class="nav-item${i.primary ? '' : ' secondary'}${i.key === current ? ' active' : ''}"${i.key === current ? ' aria-current="page"' : ''}>
+      <span class="ic">${ic(i.icon)}</span><span class="lbl">${i.label}</span><span class="lbl-short">${i.short ?? i.label}</span>${i.badge ? badge(i.badge) : ''}</a>`;
+
+  nav.innerHTML = role === 'admin' ? `
+    <a class="brand nav-brand" href="${homeHash()}"><img src="/icons/icon.svg" alt=""><span>بوفه</span></a>
+    <div class="nav-group" aria-hidden="true">روزانه</div>
+    ${items.filter((i) => i.primary).map(link).join('')}
+    <div class="nav-group" aria-hidden="true">گزارش و مدیریت</div>
+    ${items.filter((i) => !i.primary).map(link).join('')}
+    <button type="button" class="nav-item nav-more${inMore ? ' active' : ''}" data-more aria-haspopup="dialog" aria-controls="more-sheet" aria-expanded="false">
+      <span class="ic">${ic('menu')}</span><span class="lbl-short">بیشتر</span></button>
+    <div class="nav-foot"><span class="who-name"><bdi>${who}</bdi></span>${logoutButton()}
+      <button type="button" class="icon-btn" data-theme-toggle></button></div>`
+    : items.map(link).join('');
+
+  // «بیشتر» sheet (manager, phones): who is signed in, then the less frequent pages with a line on each.
+  $('#more-body').innerHTML = role === 'admin' ? `
+    <div class="sheet-user"><span class="avatar">${ic('user')}</span>
+      <div class="body"><b><bdi>${who}</bdi></b><span class="muted text-sm">مسئول بوفه</span></div>${logoutButton('btn ghost small')}</div>
+    <div class="list">${items.filter((i) => !i.primary).map((i) => `
+      <a class="list-row${i.key === current ? ' active' : ''}" href="#/${i.key}"${i.key === current ? ' aria-current="page"' : ''}>
+        <div class="icon">${ic(i.icon)}</div>
+        <div class="grow"><div class="title">${i.label}</div><div class="sub">${i.hint}</div></div>
+        ${ic('chevron-left', 'chev')}</a>`).join('')}</div>` : '';
+
+  $('#account').innerHTML = state.me.loggedIn ? `<span class="muted who-name"><bdi>${who}</bdi></span>${logoutButton()}` : '';
+  renderThemeButton();
+}
+
+// While a text field has focus the on-screen keyboard needs the room, so the bottom bar steps aside (CSS: body.typing).
+{
+  const isTextField = (el) => el?.matches?.('textarea, input:not([type="checkbox"], [type="radio"], [type="file"], [type="button"], [type="submit"])');
+  document.addEventListener('focusin', (e) => document.body.classList.toggle('typing', !!isTextField(e.target)));
+  document.addEventListener('focusout', () => setTimeout(() => document.body.classList.toggle('typing', !!isTextField(document.activeElement)), 0));
+}
+
+// «بیشتر»: open from the bar, close on a choice, on the backdrop, with Esc, or by dragging the sheet down.
+{
+  const sheet = $('#more-sheet');
+  const setExpanded = (open) => $('[data-more]')?.setAttribute('aria-expanded', String(open));
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-more]')) { sheet.showModal(); setExpanded(true); }
+  });
+  sheet.addEventListener('click', (e) => {
+    if (e.target === sheet || e.target.closest('a[href]')) sheet.close();
+  });
+  sheet.addEventListener('close', () => { setExpanded(false); sheet.querySelector('.sheet-panel').style.transform = ''; });
+  let startY = null;
+  const panel = sheet.querySelector('.sheet-panel');
+  sheet.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    const dy = e.touches[0].clientY - (startY ?? e.touches[0].clientY);
+    if (dy > 0) panel.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', (e) => {
+    const dy = e.changedTouches[0].clientY - (startY ?? e.changedTouches[0].clientY);
+    startY = null;
+    if (dy > 80) sheet.close(); else panel.style.transform = '';
+  });
 }
 
 async function route() {
@@ -2109,6 +2648,7 @@ async function route() {
   pollRequests();
   const seq = ++routeSeq;
   state.refresh = null;
+  state.refreshClaims = null;
   // Fresh element per page so listeners added by the previous view don't pile up.
   const fresh = view.cloneNode(false);
   view.replaceWith(fresh);
@@ -2117,7 +2657,7 @@ async function route() {
   try {
     await routes[key](arg, () => seq === routeSeq);
   } catch (err) {
-    if (seq === routeSeq) view.innerHTML = `<div class="card empty">${esc(err.message)}</div>`;
+    if (seq === routeSeq) view.innerHTML = `<div class="card">${emptyHtml('alert', esc(err.message))}</div>`;
   }
 }
 
@@ -2148,9 +2688,10 @@ document.addEventListener('click', async (e) => {
     } catch (err) { toast(err.message, true); }
     return;
   }
-  if (e.target.closest('#logout')) {
+  if (e.target.closest('[data-logout]')) {
     await disablePush().catch(() => {}); // stop this device getting notifications
     lastRequestId = null;
+    lastClaimId = null;
     lastReminder = null;
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     await refreshMe();
@@ -2160,21 +2701,24 @@ document.addEventListener('click', async (e) => {
 });
 
 // ---------- light / dark toggle ----------
-const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
-const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+const SUN = ic('sun', 'lg');
+const MOON = ic('moon', 'lg');
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const currentTheme = () => document.documentElement.dataset.theme || (systemDark.matches ? 'dark' : 'light');
 
+// There can be two toggles (top bar, and the sidebar footer on wide screens); all show the same state.
 function renderThemeButton() {
   const dark = currentTheme() === 'dark';
-  const btn = $('#theme-btn');
-  btn.innerHTML = dark ? SUN : MOON;
-  btn.title = dark ? 'حالت روشن' : 'حالت تاریک';
-  btn.setAttribute('aria-label', btn.title);
-  document.querySelector('meta[name="theme-color"]').content = dark ? '#171c23' : '#2f8f46';
+  document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+    btn.innerHTML = dark ? SUN : MOON;
+    btn.title = dark ? 'حالت روشن' : 'حالت تاریک';
+    btn.setAttribute('aria-label', btn.title);
+  });
+  document.querySelector('meta[name="theme-color"]').content = dark ? '#151c18' : '#1f7a3a';
 }
 
-$('#theme-btn').addEventListener('click', () => {
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-theme-toggle]')) return;
   const next = currentTheme() === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   save('theme', next);

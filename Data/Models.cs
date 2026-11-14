@@ -6,6 +6,11 @@ public class AdminUser
     public string Username { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>
+    /// Changes when the password changes; logins carry it, so every other session of this account ends.
+    /// Empty for accounts from before it existed (their current logins stay valid until the next change).
+    /// </summary>
+    public string SecurityStamp { get; set; } = "";
 }
 
 public class Person
@@ -115,6 +120,13 @@ public class SettlementDrive
     public int Id { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public string StartedBy { get; set; } = "";
+    /// <summary>
+    /// Only purchases before this moment (end of the chosen day) must be paid; orders after it don't block anyone.
+    /// Null on drives started before the cutoff existed: then the start time is the cutoff.
+    /// </summary>
+    public DateTime? Until { get; set; }
+    /// <summary>The chosen Jalali day as shown to people, e.g. "1405/08/23".</summary>
+    public string? UntilLabel { get; set; }
     public DateTime? EndedAt { get; set; }
     public string? EndedBy { get; set; }
 }
@@ -157,6 +169,44 @@ public class Payment
     public DateTime? VoidedAt { get; set; }
     public string? VoidedBy { get; set; }
     public string? VoidReason { get; set; }
+}
+
+public static class ClaimStatus
+{
+    public const string Pending = "pending";
+    public const string Approved = "approved";
+    public const string Rejected = "rejected";
+    public const string Cancelled = "cancelled";
+}
+
+/// <summary>
+/// "I paid": an employee reports a transfer with a photo of the bank receipt. It only becomes a
+/// <see cref="Payment"/> when the manager approves it. The photo is a file on disk (see ReceiptStore),
+/// never stored in the database, so the database stays small and fast however many receipts pile up.
+/// </summary>
+public class PaymentClaim
+{
+    public int Id { get; set; }
+    public int PersonId { get; set; }
+    public Person Person { get; set; } = null!;
+    public long Amount { get; set; }
+    public int? PaymentCardId { get; set; }
+    public PaymentCard? PaymentCard { get; set; }
+    public string? Note { get; set; }
+    /// <summary>Path of the receipt image relative to the receipts folder, e.g. "2026/11/3f…a1.jpg".</summary>
+    public string ReceiptFile { get; set; } = "";
+    public string ReceiptContentType { get; set; } = "";
+    public long ReceiptBytes { get; set; }
+    /// <summary>SHA-256 (hex) of the stored image, so the same receipt can't be paid off twice. Null for older claims.</summary>
+    public string? ReceiptSha256 { get; set; }
+    public string Status { get; set; } = ClaimStatus.Pending;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ReviewedAt { get; set; }
+    public string? ReviewedBy { get; set; }
+    public string? RejectReason { get; set; }
+    /// <summary>The payment recorded when this was approved.</summary>
+    public int? PaymentId { get; set; }
+    public Payment? Payment { get; set; }
 }
 
 public static class RequestStatus
@@ -213,4 +263,19 @@ public class PushSubscription
     public string P256dh { get; set; } = "";
     public string Auth { get; set; } = "";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Append-only record of security-relevant events: logins, password and account changes, bank cards, prices.
+/// There is no API to change or delete it, and database triggers refuse UPDATE and DELETE.
+/// </summary>
+public class AuditEntry
+{
+    public long Id { get; set; }
+    public DateTime At { get; set; } = DateTime.UtcNow;
+    /// <summary>Who did it: admin username, employee name, or "-" for a failed anonymous attempt.</summary>
+    public string Actor { get; set; } = "";
+    public string Action { get; set; } = "";
+    public string? Details { get; set; }
+    public string? Ip { get; set; }
 }

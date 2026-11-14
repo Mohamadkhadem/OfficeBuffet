@@ -22,7 +22,8 @@ public sealed class WebPush
     private readonly string _subject;
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<WebPush> _log;
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    // No redirects: a push service never sends one, and following one could lead anywhere.
+    private readonly HttpClient _http = new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) };
 
     /// <summary>VAPID public key (base64url, uncompressed P-256 point) the browser subscribes with.</summary>
     public string PublicKey { get; }
@@ -81,7 +82,8 @@ public sealed class WebPush
     {
         try
         {
-            var endpoint = new Uri(sub.Endpoint);
+            // Rows saved before the push-service check existed are dropped (410) instead of being called.
+            if (!IsPushService(sub.Endpoint, out var endpoint)) return 410;
             using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
                 Content = new ByteArrayContent(Encrypt(Base64Url.DecodeFromChars(sub.P256dh), Base64Url.DecodeFromChars(sub.Auth), payload)),
@@ -94,14 +96,46 @@ public sealed class WebPush
 
             using var res = await _http.SendAsync(req);
             if (!res.IsSuccessStatusCode)
-                _log.LogWarning("Push to {Host} failed: {Status} {Body}", endpoint.Host, (int)res.StatusCode, await res.Content.ReadAsStringAsync());
+            {
+                var body = await res.Content.ReadAsStringAsync();
+                _log.LogWarning("Push to {Host} failed: {Status} {Body}", endpoint.Host, (int)res.StatusCode, body.Length > 300 ? body[..300] : body);
+            }
             return (int)res.StatusCode;
         }
         catch (Exception ex)
         {
-            _log.LogWarning("Push to {Endpoint} failed: {Error}", sub.Endpoint, ex.Message);
+            // Only the host: the full endpoint URL is a secret that lets anyone send to that device.
+            _log.LogWarning("Push to {Host} failed: {Error}", Uri.TryCreate(sub.Endpoint, UriKind.Absolute, out var u) ? u.Host : "?", ex.Message);
             return 0;
         }
+    }
+
+    // Push services of Chrome/Edge/Android (FCM), Firefox, Safari/iOS and legacy Edge (WNS).
+    private static readonly string[] PushHosts = ["fcm.googleapis.com", "android.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"];
+    private static readonly string[] PushHostSuffixes = [".push.services.mozilla.com", ".push.apple.com", ".notify.windows.com"];
+
+    /// <summary>True for an https URL on a known browser push service (no other port, no user info).</summary>
+    public static bool IsPushService(string? endpoint, out Uri uri)
+    {
+        uri = null!;
+        if (endpoint == null || endpoint.Length > 1000 || !Uri.TryCreate(endpoint, UriKind.Absolute, out var u)) return false;
+        if (u.Scheme != Uri.UriSchemeHttps || !u.IsDefaultPort || u.UserInfo.Length > 0 || u.HostNameType != UriHostNameType.Dns) return false;
+        var host = u.IdnHost.ToLowerInvariant();
+        if (!PushHosts.Contains(host) && !PushHostSuffixes.Any(host.EndsWith)) return false;
+        uri = u;
+        return true;
+    }
+
+    /// <summary>A subscription the browser gave us: a push-service URL, a P-256 public key (65 bytes) and a 16-byte auth secret.</summary>
+    public static bool IsValidSubscription(string? endpoint, string? p256dh, string? auth)
+    {
+        if (!IsPushService(endpoint, out _) || p256dh is not { Length: > 0 and < 200 } || auth is not { Length: > 0 and < 100 }) return false;
+        try
+        {
+            var key = Base64Url.DecodeFromChars(p256dh);
+            return key.Length == 65 && key[0] == 0x04 && Base64Url.DecodeFromChars(auth).Length == 16;
+        }
+        catch (FormatException) { return false; }
     }
 
     /// <summary>RFC 8292: a short-lived ES256 JWT for the push service's origin.</summary>

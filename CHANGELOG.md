@@ -4,6 +4,48 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.4.0] - 2026-11-14
+
+### Added
+- Payment receipts: a colleague sends a photo of the bank receipt with the amount (with "fill my debt" buttons)
+  from the new «ثبت فیش» tab; the manager reviews the photo in the new «بررسی فیش‌ها» tab (with a pending count)
+  and approves it (records the payment) or rejects it with a reason. Photos are stored as files, not in the
+  database.
+- Settlement drive "up to a date": the manager picks the last day to settle (today, yesterday, end of last month
+  or any date). Only purchases up to that day must be paid; orders after it never block anyone, so someone who
+  has paid can keep ordering.
+
+### Changed
+- Settlement drive notifications: only people who owe for the chosen period are notified (with their amount);
+  ending a drive no longer sends a notification.
+- New navigation: a bottom bar on phones (manager: 5 sections with «بیشتر», colleague: 3) instead of the long
+  scrolling top menu; a grouped side rail for the manager on desktop.
+- Design system across the whole app: one type scale, spacing scale, icon sizes, radius and colour tokens,
+  consistent buttons, cards, lists, chips and banners, and full right-to-left layout with logical CSS properties.
+
+### Security
+- Cross-site request forgery: every state-changing API call must carry the app's `X-Buffet` header and come from
+  the same origin (other apps on the same host or sibling subdomains can no longer act for a signed-in user).
+- Security headers on every response: strict Content-Security-Policy (the theme script moved to `js/theme.js`),
+  no framing, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP; HSTS and HTTPS redirect with the new
+  `Security:RequireHttps` setting.
+- Receipts: the whole image structure is checked (dimensions, end marker), the same photo can't be submitted twice,
+  same-amount receipts within a week are flagged for the manager, photos are served with `CSP: sandbox`, uploads
+  are capped at 3 MB before they are read.
+- Approving a receipt and accepting/editing/undoing a request are atomic: a double click or two devices can no
+  longer record a payment or orders twice.
+- Manager sign-in: 5 wrong passwords lock the account for 15 minutes; unknown usernames take as long as wrong
+  passwords; PBKDF2 raised to 600,000 iterations (upgraded at the next sign-in); new passwords need 8 characters;
+  changing the password signs out every other device.
+- Colleague sign-in stays national-ID only; 10 wrong IDs lock that device for 30 minutes.
+- New append-only security log (Settings → «رویدادهای امنیتی»): sign-ins (and failures), password changes,
+  manager accounts, bank cards, prices, national IDs, imports. Database triggers refuse UPDATE and DELETE.
+- Push subscriptions only to real browser push services, at most 10 devices per account, only the owner can
+  remove one, no redirects, endpoint URLs no longer logged (no SSRF through the notification endpoint).
+- Limits: request bodies 6 MB, payments and prices at most 1,000,000,000, manager orders at most 30 lines,
+  spreadsheet XML capped while it is read.
+- Cookie keys are encrypted with Windows DPAPI; first-run setup can't create two managers at once.
+
 ## [1.3.0] - 2026-11-12
 
 ### Added

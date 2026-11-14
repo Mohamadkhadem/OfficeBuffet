@@ -12,6 +12,7 @@ namespace OfficeBuffet.Services;
 public static class Spreadsheet
 {
     public const int MaxRows = 5000;
+    private const long MaxXmlChars = 20_000_000;
 
     /// <exception cref="InvalidDataException">The file is not a readable .xlsx or .csv; the message is for the user.</exception>
     public static List<List<string>> Read(Stream file, string fileName)
@@ -118,10 +119,18 @@ public static class Spreadsheet
     private static XDocument Load(ZipArchiveEntry entry)
     {
         // The upload is untrusted: no DTDs, and a cap on the unzipped size (zip bombs).
-        if (entry.Length > 50_000_000) throw new InvalidDataException("فایل Excel بیش از حد بزرگ است.");
+        // entry.Length is only what the zip claims, so the XML reader also stops after MaxXmlChars characters.
+        if (entry.Length > MaxXmlChars) throw new InvalidDataException("فایل Excel بیش از حد بزرگ است.");
         using var s = entry.Open();
-        using var reader = System.Xml.XmlReader.Create(s, new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null });
+        using var reader = System.Xml.XmlReader.Create(s, new System.Xml.XmlReaderSettings
+        {
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaxXmlChars,
+        });
         try { return XDocument.Load(reader); }
+        catch (System.Xml.XmlException e) when (e.Message.Contains("MaxCharactersInDocument", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("فایل Excel بیش از حد بزرگ است.");
+        }
         catch (System.Xml.XmlException) { throw new InvalidDataException("فایل Excel خراب است."); }
     }
 

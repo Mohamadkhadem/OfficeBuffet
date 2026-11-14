@@ -18,6 +18,7 @@ public static class RequestEndpoints
     private const int RecentCount = 30;
     private static readonly TimeSpan RemindEvery = TimeSpan.FromMinutes(2);
     private const int MaxReminders = 2;
+    private const int MaxDevices = 10;
 
     public static void MapRequests(this IEndpointRouteBuilder app)
     {
@@ -57,9 +58,11 @@ public static class RequestEndpoints
             if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
             if (await db.Requests.CountAsync(r => r.PersonId == personId && r.Status == RequestStatus.Pending) >= MaxPendingPerPerson)
                 return ApiErrors.Bad($"شما {MaxPendingPerPerson} درخواست در انتظار دارید؛ صبر کنید تا رسیدگی شوند.");
-            // During a settlement drive nobody with an open debt can order anything, free items included.
-            if (await Balances.ActiveDrive(db) != null && await Balances.Total(db, personId) is var balance and > 0)
-                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(balance));
+            // During a settlement drive whoever still owes for purchases up to its cutoff can't order anything,
+            // free items included. Orders after the cutoff don't count.
+            if (await Balances.ActiveDrive(db) is { } drive
+                && (await Balances.DueForDrive(db, drive, personId)).GetValueOrDefault(personId) is var due and > 0)
+                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(due, drive));
 
             var itemIds = lines.Select(l => l.ItemId).ToList();
             var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);
@@ -108,7 +111,7 @@ public static class RequestEndpoints
 
             request.RemindedAt = now;
             request.RemindCount++;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
             var waited = (int)(now - request.CreatedAt).TotalMinutes;
             _ = push.NotifyAdmins(new
             {
@@ -129,7 +132,7 @@ public static class RequestEndpoints
             request.Status = RequestStatus.Cancelled;
             request.HandledAt = DateTime.UtcNow;
             request.HandledBy = ctx.User.Identity!.Name;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
             return Results.Ok();
         });
     }
@@ -150,6 +153,9 @@ public static class RequestEndpoints
             count = await db.Requests.CountAsync(r => r.Status == RequestStatus.Pending),
             latestId = await db.Requests.Where(r => r.Status == RequestStatus.Pending).MaxAsync(r => (int?)r.Id) ?? 0,
             lastReminder = await db.Requests.Where(r => r.Status == RequestStatus.Pending).MaxAsync(r => r.RemindedAt),
+            // Payments employees reported with a receipt, waiting for the manager (badge on the payments tab).
+            claims = await db.PaymentClaims.CountAsync(c => c.Status == ClaimStatus.Pending),
+            latestClaimId = await db.PaymentClaims.Where(c => c.Status == ClaimStatus.Pending).MaxAsync(c => (int?)c.Id) ?? 0,
         });
 
         // The manager changes a pending request before accepting it: fewer or more of an item, an item removed
@@ -176,7 +182,7 @@ public static class RequestEndpoints
             request.Lines = lines.Select(l => new PantryRequestLine { ItemId = l.ItemId, ItemName = items[l.ItemId].Name, Quantity = l.Quantity }).ToList();
             request.EditedAt = DateTime.UtcNow;
             request.EditedBy = ctx.User.Identity!.Name;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
             return Results.Ok();
         });
 
@@ -209,7 +215,7 @@ public static class RequestEndpoints
             request.HandledAt = null;
             request.HandledBy = null;
             request.RejectReason = null;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
             return Results.Ok();
         });
 
@@ -238,7 +244,7 @@ public static class RequestEndpoints
             request.Status = RequestStatus.Done;
             request.HandledAt = now;
             request.HandledBy = by;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
 
             _ = push.NotifyPerson(request.PersonId, new
             {
@@ -259,7 +265,7 @@ public static class RequestEndpoints
             request.RejectReason = Clip(req.Reason);
             request.HandledAt = DateTime.UtcNow;
             request.HandledBy = ctx.User.Identity!.Name;
-            await db.SaveChangesAsync();
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این درخواست همین الان تغییر کرد؛ صفحه را تازه کنید.");
 
             _ = push.NotifyPerson(request.PersonId, new
             {
@@ -278,24 +284,39 @@ public static class RequestEndpoints
 
         g.MapPost("/subscribe", async (PushSubscribeRequest req, HttpContext ctx, AppDb db) =>
         {
-            if (!Uri.TryCreate(req.Endpoint, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
-                || string.IsNullOrEmpty(req.Keys?.P256dh) || string.IsNullOrEmpty(req.Keys.Auth))
+            // The server will POST to this URL, so it must really be a browser push service, not any address
+            // (e.g. a machine inside the office network).
+            if (!WebPush.IsValidSubscription(req.Endpoint, req.Keys?.P256dh, req.Keys?.Auth))
                 return ApiErrors.Bad("اطلاعات اشتراک اعلان معتبر نیست.");
             var sub = await db.PushSubscriptions.FirstOrDefaultAsync(s => s.Endpoint == req.Endpoint);
             if (sub == null) db.PushSubscriptions.Add(sub = new PushSubscription { Endpoint = req.Endpoint });
             // A shared device belongs to whoever subscribed last.
             var isAdmin = ctx.User.IsInRole(Roles.Admin);
-            sub.AdminUserId = isAdmin ? AdminId(ctx.User) : null;
-            sub.PersonId = isAdmin ? null : AuthEndpoints.EmployeePersonId(ctx.User);
-            sub.P256dh = req.Keys.P256dh;
+            int? adminId = isAdmin ? AdminId(ctx.User) : null;
+            var personId = isAdmin ? null : AuthEndpoints.EmployeePersonId(ctx.User);
+            sub.AdminUserId = adminId;
+            sub.PersonId = personId;
+            sub.P256dh = req.Keys!.P256dh;
             sub.Auth = req.Keys.Auth;
+            sub.CreatedAt = DateTime.UtcNow;
+            // A few devices per account are plenty; the oldest go first.
+            var stale = await db.PushSubscriptions
+                .Where(s => s.Id != sub.Id && (adminId != null ? s.AdminUserId == adminId : s.PersonId == personId))
+                .OrderByDescending(s => s.CreatedAt).Skip(MaxDevices - 1).ToListAsync();
+            db.PushSubscriptions.RemoveRange(stale);
             await db.SaveChangesAsync();
             return Results.Ok();
         });
 
-        g.MapPost("/unsubscribe", async (PushUnsubscribeRequest req, AppDb db) =>
+        // Only the account that owns a device's subscription can remove it.
+        g.MapPost("/unsubscribe", async (PushUnsubscribeRequest req, HttpContext ctx, AppDb db) =>
         {
-            await db.PushSubscriptions.Where(s => s.Endpoint == req.Endpoint).ExecuteDeleteAsync();
+            var isAdmin = ctx.User.IsInRole(Roles.Admin);
+            int? adminId = isAdmin ? AdminId(ctx.User) : null;
+            var personId = isAdmin ? null : AuthEndpoints.EmployeePersonId(ctx.User);
+            await db.PushSubscriptions
+                .Where(s => s.Endpoint == req.Endpoint && (adminId != null ? s.AdminUserId == adminId : s.PersonId == personId))
+                .ExecuteDeleteAsync();
             return Results.Ok();
         });
     }

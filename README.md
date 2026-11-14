@@ -65,6 +65,8 @@ which is checked against its check digit. It runs entirely on your own server in
   two minutes apart. After that the app suggests walking over.
 - **Answers as notifications:** "☕ Your request was seen and will be ready in a few minutes", or
   "✋ Rejected, with the reason".
+- **Payment receipts:** send a photo of the bank receipt with the amount from the «ثبت فیش» tab and follow its
+  status; the manager approves it and the payment is recorded.
 - **Own account only:** each person sees their own orders, payments, settlements and balance, and nobody
   else's.
 
@@ -92,8 +94,11 @@ which is checked against its check digit. It runs entirely on your own server in
 - **Edit and undo requests:** the manager can change a pending request (fewer/more of an item, remove or add
   items) before accepting it, and can undo an accepted or rejected request: the orders it created are voided
   (kept in history) and it goes back to pending.
-- **Settlement drive:** "Start settlement" on the payments page notifies everyone; until "End settlement",
-  anyone with an open debt cannot send any request (free items included). The server enforces it.
+- **Receipt review:** receipts colleagues send arrive in the «بررسی فیش‌ها» tab with the photo; approve to record
+  the payment or reject with a reason. Duplicates are refused or flagged.
+- **Settlement drive:** "Start settlement" on the payments page, up to a chosen date, notifies only the people
+  who owe for purchases up to that day; until "End settlement" they cannot send any request (free items
+  included). Orders after that day block nobody. The server enforces it.
 - **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
   appear under each colleague's balance, and tapping a number copies it.
 - Multiple manager accounts, password change, and light and dark themes.
@@ -209,6 +214,7 @@ Everything lives in the data folder (`App_Data` by default):
 | File | Contents | If lost |
 |---|---|---|
 | `officebuffet.db` | All business data | Restore from backup |
+| `receipts/` | Receipt photos colleagues upload with a payment (files, not in the database) | Payments stay; their photos can't be viewed |
 | `keys/` | Keys that encrypt login cookies | Everyone has to sign in again |
 | `vapid.json` | Web Push key pair | Notifications must be turned on again on each device |
 
@@ -232,12 +238,27 @@ their existing `officebite.db` automatically.
 OfficeBuffet is designed for a **trusted office network**, not the open internet.
 
 - Colleagues sign in with their national ID alone, without a password. Anyone who knows a colleague's national
-  ID can *view* that colleague's records, but cannot change anything. Deactivating a person or changing their
-  national ID revokes their access immediately.
-- Manager passwords are hashed with PBKDF2-SHA256 (100,000 iterations). Login attempts are rate-limited per
-  IP address.
-- Cookies are `HttpOnly` and `SameSite=Strict`. Every data route requires sign-in; only sign-in and first-run setup are public.
+  ID can sign in as that colleague: view their records, send requests or report receipts in their name (both
+  still need the manager's approval). Every sign-in is recorded with time, IP and device in the security log
+  (Settings), and 10 wrong national IDs lock that device out for 30 minutes. Deactivating a person or changing
+  their national ID revokes their access immediately.
+- Manager passwords: at least 8 characters, PBKDF2-SHA256 with 600,000 iterations (older hashes are upgraded at the
+  next sign-in). 5 wrong passwords lock the account for 15 minutes. Changing the password signs out every other
+  device of that account.
+- Cookies are `HttpOnly`, `SameSite=Strict` (and `Secure` over HTTPS). Every data route requires sign-in; only
+  sign-in and first-run setup are public. Every state-changing call must come from the app's own page (an
+  `X-Buffet` header plus an Origin check), so another site or app on the same host can't act for a signed-in user.
+- Strict Content-Security-Policy (no inline scripts), no framing, `nosniff`, `Referrer-Policy: no-referrer`, and
+  HSTS when `Security:RequireHttps` is on.
+- Receipts: only well-formed JPEG/PNG/WebP up to 3 MB, stored under random names outside `wwwroot`, served with
+  `Content-Security-Policy: sandbox`. The same photo is never accepted twice; same-amount receipts of one person
+  within a week are flagged for the manager. Approving is atomic: a double click records one payment.
+- The security log (sign-ins, bank cards, manager accounts, prices, national IDs) is append-only: database
+  triggers refuse UPDATE and DELETE.
+- Push notifications are only sent to real browser push services (Google, Mozilla, Apple, Microsoft).
 - Uploaded spreadsheets are parsed defensively: size limits, no DTD processing, and zip-bomb checks.
+- On Windows the cookie keys in `App_Data/keys` are encrypted with the machine's DPAPI, so a copy of `App_Data`
+  (e.g. a backup) can't be used to forge a sign-in.
 - Never commit `App_Data/` or `certs/`. Both are in `.gitignore`.
 
 If you find a vulnerability, please report it privately to the maintainers instead of opening a public issue.

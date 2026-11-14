@@ -96,6 +96,8 @@ public static class ReportEndpoints
                         p.Id, p.PersonId, personName = p.Person.Name, p.Amount, cardTitle = p.PaymentCard!.Title,
                         p.Note, p.CreatedAt, p.CreatedBy, p.VoidedAt, p.VoidedBy, p.VoidReason,
                         settled = db.Settlements.Any(s => s.PersonId == p.PersonId && s.VoidedAt == null && s.Until > p.CreatedAt),
+                        // Set when the payment came from an employee's receipt; the photo stays viewable.
+                        receiptId = db.PaymentClaims.Where(c => c.PaymentId == p.Id).Select(c => (int?)c.Id).FirstOrDefault(),
                     }).ToListAsync(),
                 settlements = await settlements.OrderByDescending(s => s.CreatedAt).ThenByDescending(s => s.Id).Take(MaxEntries)
                     .Select(s => new
