@@ -58,11 +58,12 @@ public static class RequestEndpoints
             if (lines.Any(l => l.Quantity > MaxQuantity)) return ApiErrors.Bad($"تعداد هر قلم حداکثر {MaxQuantity} است.");
             if (await db.Requests.CountAsync(r => r.PersonId == personId && r.Status == RequestStatus.Pending) >= MaxPendingPerPerson)
                 return ApiErrors.Bad($"شما {MaxPendingPerPerson} درخواست در انتظار دارید؛ صبر کنید تا رسیدگی شوند.");
-            // During a settlement drive whoever still owes for purchases up to its cutoff can't order anything,
-            // free items included. Orders after the cutoff don't count.
+            // During a settlement drive whoever owes more than their staff group allows for purchases up to its
+            // cutoff can't order anything, free items included. Orders after the cutoff don't count.
             if (await Balances.ActiveDrive(db) is { } drive
-                && (await Balances.DueForDrive(db, drive, personId)).GetValueOrDefault(personId) is var due and > 0)
-                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(due, drive));
+                && (await Balances.DueForDrive(db, drive, personId)).GetValueOrDefault(personId) is var due and > 0
+                && (await Balances.DebtLimits(db, personId)).GetValueOrDefault(personId) is var limit && due > limit)
+                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(due, limit, drive));
 
             var itemIds = lines.Select(l => l.ItemId).ToList();
             var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);

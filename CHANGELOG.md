@@ -4,6 +4,31 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.5.0] - 2026-11-23
+
+### Added
+- The manager can correct a receipt's amount or card, before or after approval. After approval the recorded
+  payment is voided with the reason (kept in history) and the corrected one is recorded on the same date; the
+  original amount stays visible to the manager and the colleague, who is notified.
+- Undo for reviewed receipts: an approved receipt goes back to pending (its payment is voided with a reason) and
+  can be approved, corrected or rejected again; a rejected one simply goes back to pending. Both are refused when
+  a settlement has already closed that payment's period. Corrections and undos are written to the security log.
+- Before a receipt is sent, the colleague confirms the amount, shown large, in words and with the card.
+- Allowed debt per staff group: during a settlement drive, members whose debt for the drive's period is within
+  their group's limit can still order; above it they must pay at least the excess first. 0 (and no group) keeps
+  the old rule: any debt blocks. The manager's debtor list marks who is blocked with a lock, colleagues see how
+  much they must pay to order again, and limit changes are written to the security log.
+
+### Changed
+- Amount fields show thousands separators while typing and the amount in words underneath
+  ("۴٬۰۰۰٬۰۰۰ — چهار میلیون تومان"); the manager's receipt cards show the amount in words too.
+
+### Fixed
+- Card balances: money paid without a card (or paid into a card beyond its purchases) now pays off the oldest
+  unpaid purchases first, whatever card they belong to. Before, it filled the cards in card order, so a payment
+  for last week's coffees could show this week's breakfasts as a coffee-card debt. Totals are unchanged.
+- The receipt form no longer pre-selects a card that isn't owed anything; it picks where the debt actually is.
+
 ## [1.4.0] - 2026-11-14
 
 ### Added
@@ -118,6 +143,8 @@ First public release.
 - Self-contained Windows build; Windows service scripts and IIS `web.config` included.
 - `tools/new-certificate.ps1` to create a private CA and HTTPS certificate for the office network.
 
+[1.5.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.5.0
+[1.4.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.1.0

@@ -19,6 +19,8 @@ public static class BalanceEndpoints
             var parts = (await Balances.ByCard(db, id)).GetValueOrDefault(id.Value) ?? [];
             var cards = await db.PaymentCards.OrderBy(c => c.Id).ToListAsync();
             var drive = await Balances.ActiveDrive(db);
+            var due = drive == null ? 0 : (await Balances.DueForDrive(db, drive, id)).GetValueOrDefault(id.Value);
+            var limit = (await Balances.DebtLimits(db, id)).GetValueOrDefault(id.Value);
             return Results.Ok(new
             {
                 total = parts.Values.Sum(),
@@ -26,8 +28,11 @@ public static class BalanceEndpoints
                 // Purchases from categories without a card, minus payments not tied to a card.
                 general = parts.GetValueOrDefault(Balances.General),
                 drive = DriveDto(drive),
-                // What this person must pay before ordering again (0 = free to order).
-                due = drive == null ? 0 : (await Balances.DueForDrive(db, drive, id)).GetValueOrDefault(id.Value),
+                // Debt for the drive's period, and the allowed debt of the person's staff group: while a drive is on
+                // and due > debtLimit, the person can't order until they pay at least due − debtLimit.
+                due,
+                debtLimit = limit,
+                blocked = drive != null && due > limit,
             });
         }).RequireAuthorization();
 
@@ -48,15 +53,23 @@ public static class BalanceEndpoints
             db.SettlementDrives.Add(drive);
             await db.SaveChangesAsync();
             var debtors = await Balances.DueForDrive(db, drive);
+            var limits = await Balances.DebtLimits(db);
             foreach (var (personId, due) in debtors)
+            {
+                var limit = limits.GetValueOrDefault(personId);
                 _ = push.NotifyPerson(personId, new
                 {
                     title = "💳 درخواست تسویه حساب",
                     body = $"مسئول بوفه درخواست تسویه‌ی خریدهای تا {FaDigits(drive.UntilLabel!)} را ارسال کرده است. " +
-                           $"بدهی شما {FaDigits(due.ToString("N0", CultureInfo.InvariantCulture))} تومان است؛ با احترام، تا پرداخت آن سفارش جدید پذیرفته نمی‌شود.",
+                           $"بدهی شما {Toman(due)} تومان است؛ " + (due > limit
+                               ? limit > 0
+                                   ? $"با احترام، تا دست‌کم {Toman(due - limit)} تومان آن را پرداخت نکنید سفارش جدید پذیرفته نمی‌شود."
+                                   : "با احترام، تا پرداخت آن سفارش جدید پذیرفته نمی‌شود."
+                               : "لطفاً آن را پرداخت کنید."),
                     tag = "settlement-drive",
                     url = "/#/pay",
                 });
+            }
             return Results.Ok(new { drive = DriveDto(drive), notified = debtors.Count });
         });
 
@@ -77,19 +90,28 @@ public static class BalanceEndpoints
             var drive = await Balances.ActiveDrive(db);
             if (drive == null) return [];
             var due = await Balances.DueForDrive(db, drive);
+            var limits = await Balances.DebtLimits(db);
             var names = await db.People.ToDictionaryAsync(p => p.Id, p => p.Name);
-            return due.OrderByDescending(x => x.Value)
-                .Select(x => (object)new { personId = x.Key, name = names.GetValueOrDefault(x.Key), balance = x.Value }).ToList();
+            return due.OrderByDescending(x => x.Value - limits.GetValueOrDefault(x.Key)).ThenByDescending(x => x.Value)
+                .Select(x => (object)new
+                {
+                    personId = x.Key, name = names.GetValueOrDefault(x.Key), balance = x.Value,
+                    debtLimit = limits.GetValueOrDefault(x.Key), blocked = x.Value > limits.GetValueOrDefault(x.Key),
+                }).ToList();
         });
     }
 
     private static object DriveDto(SettlementDrive? d) =>
         new { active = d != null, startedAt = d?.StartedAt, startedBy = d?.StartedBy, until = d == null ? (DateTime?)null : d.Until ?? d.StartedAt, untilLabel = d?.UntilLabel };
 
+    private static string Toman(long n) => FaDigits(n.ToString("N0", CultureInfo.InvariantCulture));
+
     private static string FaDigits(string s) => string.Concat(s.Select(c => c is >= '0' and <= '9' ? (char)('۰' + c - '0') : c == ',' ? '٬' : c));
 
     /// <summary>Refusal message for a request while a drive is on and the person still owes money.</summary>
-    public static string BlockedMessage(long due, SettlementDrive drive) =>
+    public static string BlockedMessage(long due, long limit, SettlementDrive drive) =>
         $"حالت تسویه فعال است و بابت خریدهای {(drive.UntilLabel != null ? $"تا {FaDigits(drive.UntilLabel)}" : "قبل از شروع تسویه")}، " +
-        $"{FaDigits(due.ToString("N0", CultureInfo.InvariantCulture))} تومان بدهکارید؛ تا آن را پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود.";
+        $"{Toman(due)} تومان بدهکارید" + (limit > 0
+            ? $" (حد مجاز گروه شما {Toman(limit)} تومان)؛ تا دست‌کم {Toman(due - limit)} تومان پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود."
+            : "؛ تا آن را پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود.");
 }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using OfficeBuffet.Data;
+using OfficeBuffet.Services;
 
 namespace OfficeBuffet.Endpoints;
 
@@ -11,6 +12,7 @@ namespace OfficeBuffet.Endpoints;
 public static class MenuEndpoints
 {
     private const int MaxNameLength = 40;
+    private const long MaxDebtLimit = 1_000_000_000;
 
     public static void MapMenu(this IEndpointRouteBuilder app)
     {
@@ -136,28 +138,31 @@ public static class MenuEndpoints
                 .Select(x => new { Id = x.Key!.Value, Count = x.Count() }).ToDictionaryAsync(x => x.Id, x => x.Count);
             return (await db.PersonGroups.OrderBy(x => x.Name).ToListAsync()).Select(x => new
             {
-                x.Id, x.Name,
+                x.Id, x.Name, x.DebtLimit,
                 memberCount = members.GetValueOrDefault(x.Id),
                 categoryCount = categories.GetValueOrDefault(x.Id),
             });
         });
 
-        g.MapPost("/groups", async (PersonGroupRequest req, AppDb db) =>
+        g.MapPost("/groups", async (PersonGroupRequest req, HttpContext ctx, AppDb db) =>
         {
             var group = new PersonGroup();
             var error = await ApplyGroup(req, group, db);
             if (error != null) return ApiErrors.Bad(error);
+            if (group.DebtLimit > 0) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {group.DebtLimit:N0}");
             db.PersonGroups.Add(group);
             await db.SaveChangesAsync();
             return Results.Ok(new { group.Id });
         });
 
-        g.MapPut("/groups/{id:int}", async (int id, PersonGroupRequest req, AppDb db) =>
+        g.MapPut("/groups/{id:int}", async (int id, PersonGroupRequest req, HttpContext ctx, AppDb db) =>
         {
             var group = await db.PersonGroups.FindAsync(id);
             if (group == null) return ApiErrors.NotFound("گروه پیدا نشد.");
+            var oldLimit = group.DebtLimit;
             var error = await ApplyGroup(req, group, db);
             if (error != null) return ApiErrors.Bad(error);
+            if (group.DebtLimit != oldLimit) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {oldLimit:N0} ← {group.DebtLimit:N0}");
             await db.SaveChangesAsync();
             return Results.Ok();
         });
@@ -183,7 +188,9 @@ public static class MenuEndpoints
         if (name.Length == 0) return "نام گروه را وارد کنید.";
         if (name.Length > MaxNameLength) return $"نام گروه حداکثر {MaxNameLength} حرف است.";
         if (await db.PersonGroups.AnyAsync(x => x.Name == name && x.Id != group.Id)) return "گروهی با این نام وجود دارد.";
+        if (req.DebtLimit is < 0 or > MaxDebtLimit) return "حد مجاز بدهی نامعتبر است.";
         group.Name = name;
+        group.DebtLimit = req.DebtLimit;
         return null;
     }
 

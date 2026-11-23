@@ -372,8 +372,17 @@ namespace OfficeBuffet.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EditedBy")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Note")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("OriginalAmount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("PaymentCardId")
                         .HasColumnType("INTEGER");
@@ -474,6 +483,9 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("DebtLimit")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()

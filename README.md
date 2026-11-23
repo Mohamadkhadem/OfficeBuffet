@@ -95,10 +95,14 @@ which is checked against its check digit. It runs entirely on your own server in
   items) before accepting it, and can undo an accepted or rejected request: the orders it created are voided
   (kept in history) and it goes back to pending.
 - **Receipt review:** receipts colleagues send arrive in the «بررسی فیش‌ها» tab with the photo; approve to record
-  the payment or reject with a reason. Duplicates are refused or flagged.
+  the payment or reject with a reason. Duplicates are refused or flagged. A wrong amount can be corrected, and an
+  approval can be undone, even later; the earlier payment is voided with the reason and stays in history.
 - **Settlement drive:** "Start settlement" on the payments page, up to a chosen date, notifies only the people
   who owe for purchases up to that day; until "End settlement" they cannot send any request (free items
   included). Orders after that day block nobody. The server enforces it.
+- **Allowed debt per staff group:** each staff group can have an allowed debt for settlement drives. Members
+  whose debt is within it can still order; above it they must pay at least the excess. 0, or no group, means any
+  debt blocks.
 - **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
   appear under each colleague's balance, and tapping a number copies it.
 - Multiple manager accounts, password change, and light and dark themes.

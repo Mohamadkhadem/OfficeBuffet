@@ -158,6 +158,109 @@ public static class PaymentClaimEndpoints
             return Results.Ok(new { personName = claim.Person.Name, claim.Amount });
         });
 
+        // Correct the amount or card of a receipt, before or after approval. After approval the recorded payment is
+        // voided (kept in history with the reason) and a corrected one takes its place, on the same date.
+        g.MapPut("/{id:int}", async (int id, ClaimEditRequest req, HttpContext ctx, AppDb db, WebPush push) =>
+        {
+            var claim = await db.PaymentClaims.Include(c => c.Person).Include(c => c.Payment).FirstOrDefaultAsync(c => c.Id == id);
+            if (claim == null) return ApiErrors.NotFound("فیش پیدا نشد.");
+            if (claim.Status is not (ClaimStatus.Pending or ClaimStatus.Approved))
+                return ApiErrors.Conflict("فقط فیش در انتظار یا تأییدشده را می‌شود اصلاح کرد.");
+            if (req.Amount <= 0 || req.Amount > MaxAmount) return ApiErrors.Bad("مبلغ را درست وارد کنید.");
+            if (req.CardId != null && !await db.PaymentCards.AnyAsync(x => x.Id == req.CardId)) return ApiErrors.Bad("کارت انتخاب‌شده وجود ندارد.");
+            if (req.Amount == claim.Amount && req.CardId == claim.PaymentCardId) return ApiErrors.Bad("چیزی تغییر نکرده است.");
+            var reason = Clip(req.Reason);
+            var approved = claim.Status == ClaimStatus.Approved;
+            if (approved && reason == null) return ApiErrors.Bad("دلیل اصلاح را بنویسید؛ در سابقه‌ی پرداخت می‌ماند.");
+            if (approved && await SettledAfter(db, claim) is { } settledUntil)
+                return ApiErrors.Conflict($"حساب این شخص تا {FaDigits(settledUntil)} تسویه شده و این پرداخت جزو آن است؛ اول آن تسویه را ابطال کنید.");
+
+            var now = DateTime.UtcNow;
+            var by = ctx.User.Identity!.Name!;
+            var before = $"{Money(claim.Amount)}{(claim.PaymentCardId == null ? "" : $" (کارت {claim.PaymentCardId})")}";
+            var after = $"{Money(req.Amount)}{(req.CardId == null ? "" : $" (کارت {req.CardId})")}";
+            await using var tx = await db.Database.BeginTransactionAsync();
+            if (approved && claim.Payment is { VoidedAt: null } old)
+            {
+                // Only one of two simultaneous corrections may void the payment.
+                var voided = await db.Payments.Where(p => p.Id == old.Id && p.VoidedAt == null).ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.VoidedAt, now).SetProperty(p => p.VoidedBy, by)
+                    .SetProperty(p => p.VoidReason, Clip($"اصلاح فیش: {before} ← {after} — {reason}")));
+                if (voided == 0) return ApiErrors.Conflict("این فیش همین الان اصلاح شد؛ صفحه را تازه کنید.");
+            }
+            if (approved)
+            {
+                var payment = new Payment
+                {
+                    PersonId = claim.PersonId, Amount = req.Amount, PaymentCardId = req.CardId,
+                    Note = claim.Note == null ? "با فیش ارسالی (اصلاح‌شده)" : $"با فیش ارسالی (اصلاح‌شده) — {claim.Note}",
+                    CreatedAt = claim.Payment?.CreatedAt ?? now, CreatedBy = by,
+                };
+                db.Payments.Add(payment);
+                claim.Payment = payment;
+            }
+            claim.OriginalAmount ??= claim.Amount;
+            claim.Amount = req.Amount;
+            claim.PaymentCardId = req.CardId;
+            claim.EditedAt = now;
+            claim.EditedBy = by;
+            Audit.Add(db, ctx, "claim.edit", $"فیش {claim.Id} «{claim.Person.Name}»: {before} ← {after}{(reason == null ? "" : $" — {reason}")}");
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این فیش همین الان بررسی شد؛ صفحه را تازه کنید.");
+            await tx.CommitAsync();
+
+            _ = push.NotifyPerson(claim.PersonId, new
+            {
+                title = "مبلغ فیشت اصلاح شد",
+                body = FaDigits(approved ? $"مبلغ ثبت‌شده: {Money(req.Amount)} — {reason}" : $"مبلغ فیش: {Money(req.Amount)}؛ هنوز در انتظار بررسی است."),
+                tag = $"claim-{claim.Id}",
+                url = "/#/pay",
+            });
+            return Results.Ok(new { claim.Amount });
+        });
+
+        // Undo a review: an approved receipt's payment is voided (kept in history) and it goes back to the queue,
+        // where it can be approved again, corrected or rejected. A rejected one simply goes back to the queue.
+        g.MapPost("/{id:int}/reopen", async (int id, VoidRequest req, HttpContext ctx, AppDb db, WebPush push) =>
+        {
+            var claim = await db.PaymentClaims.Include(c => c.Person).Include(c => c.Payment).FirstOrDefaultAsync(c => c.Id == id);
+            if (claim == null) return ApiErrors.NotFound("فیش پیدا نشد.");
+            if (claim.Status is not (ClaimStatus.Approved or ClaimStatus.Rejected))
+                return ApiErrors.Conflict("فقط فیش تأییدشده یا ردشده را می‌شود برگرداند.");
+            var reason = Clip(req.Reason);
+            var approved = claim.Status == ClaimStatus.Approved;
+            if (approved && reason == null) return ApiErrors.Bad("دلیل برگرداندن را بنویسید؛ در سابقه‌ی پرداخت می‌ماند.");
+            if (approved && await SettledAfter(db, claim) is { } settledUntil)
+                return ApiErrors.Conflict($"حساب این شخص تا {FaDigits(settledUntil)} تسویه شده و این پرداخت جزو آن است؛ اول آن تسویه را ابطال کنید.");
+
+            var now = DateTime.UtcNow;
+            var by = ctx.User.Identity!.Name!;
+            await using var tx = await db.Database.BeginTransactionAsync();
+            if (claim.Payment is { VoidedAt: null } payment)
+                await db.Payments.Where(p => p.Id == payment.Id && p.VoidedAt == null).ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.VoidedAt, now).SetProperty(p => p.VoidedBy, by)
+                    .SetProperty(p => p.VoidReason, Clip($"برگرداندن تأیید فیش — {reason}")));
+            claim.Status = ClaimStatus.Pending;
+            claim.PaymentId = null;
+            claim.Payment = null;
+            claim.RejectReason = null;
+            claim.ReviewedAt = null;
+            claim.ReviewedBy = null;
+            Audit.Add(db, ctx, "claim.reopen", $"فیش {claim.Id} «{claim.Person.Name}» {Money(claim.Amount)} ({(approved ? "تأییدشده" : "ردشده")}){(reason == null ? "" : $" — {reason}")}");
+            // Status is the concurrency token: of two simultaneous undos (or undo + another action) only one wins.
+            if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این فیش همین الان تغییر کرد؛ صفحه را تازه کنید.");
+            await tx.CommitAsync();
+
+            if (approved)
+                _ = push.NotifyPerson(claim.PersonId, new
+                {
+                    title = "تأیید فیشت برگردانده شد",
+                    body = FaDigits($"{Money(claim.Amount)} دوباره در انتظار بررسی است — {reason}"),
+                    tag = $"claim-{claim.Id}",
+                    url = "/#/pay",
+                });
+            return Results.Ok();
+        });
+
         g.MapPost("/{id:int}/reject", async (int id, VoidRequest req, HttpContext ctx, AppDb db, WebPush push) =>
         {
             var claim = await db.PaymentClaims.FirstOrDefaultAsync(c => c.Id == id);
@@ -184,7 +287,7 @@ public static class PaymentClaimEndpoints
 
     private record ClaimRow(int Id, int PersonId, string PersonName, long Amount, int? PaymentCardId, string? CardTitle,
         string? Note, string Status, DateTime CreatedAt, DateTime? ReviewedAt, string? ReviewedBy, string? RejectReason,
-        long ReceiptBytes, int? PaymentId)
+        long ReceiptBytes, int? PaymentId, long? OriginalAmount, DateTime? EditedAt, string? EditedBy)
     {
         /// <summary>Admin list only: a similar claim (see <see cref="PendingWithLookalikes"/>).</summary>
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -193,7 +296,20 @@ public static class PaymentClaimEndpoints
 
     private static IQueryable<ClaimRow> Project(IQueryable<PaymentClaim> q) =>
         q.Select(c => new ClaimRow(c.Id, c.PersonId, c.Person.Name, c.Amount, c.PaymentCardId, c.PaymentCard!.Title,
-            c.Note, c.Status, c.CreatedAt, c.ReviewedAt, c.ReviewedBy, c.RejectReason, c.ReceiptBytes, c.PaymentId));
+            c.Note, c.Status, c.CreatedAt, c.ReviewedAt, c.ReviewedBy, c.RejectReason, c.ReceiptBytes, c.PaymentId,
+            c.OriginalAmount, c.EditedAt, c.EditedBy));
+
+    /// <summary>
+    /// The label of a settlement that already closed the period of this receipt's payment, if any: changing that
+    /// payment would silently change a closed account, so the settlement has to be voided first.
+    /// </summary>
+    private static async Task<string?> SettledAfter(AppDb db, PaymentClaim claim)
+    {
+        if (claim.Payment == null) return null;
+        var at = claim.Payment.CreatedAt;
+        return await db.Settlements.Where(s => s.PersonId == claim.PersonId && s.VoidedAt == null && s.Until > at)
+            .OrderByDescending(s => s.Until).Select(s => s.UntilLabel).FirstOrDefaultAsync();
+    }
 
     /// <summary>
     /// Pending claims, each with <c>lookalikeId</c>: another pending or approved claim of the same person for the same

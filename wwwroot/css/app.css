@@ -169,15 +169,17 @@ b, strong { font-weight: var(--fw-bold); }
 @media (max-width: 899px) {
   .nav {
     position: fixed; inset-inline: 0; bottom: 0; z-index: var(--z-bar);
-    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center;
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: center;
     height: calc(var(--bnav-h) + env(safe-area-inset-bottom));
     padding-block: 0 env(safe-area-inset-bottom);
     padding-inline: max(var(--s-1), env(safe-area-inset-left)) max(var(--s-1), env(safe-area-inset-right));
     background: var(--surface); border-block-start: 1px solid var(--border);
     box-shadow: 0 -2px 12px rgba(16, 32, 22, .06);
   }
-  .nav-item { flex-direction: column; justify-content: center; gap: 2px; min-height: 56px; padding: 0; font-size: var(--fs-xs); }
-  .nav-item .ic { width: 56px; height: 32px; border-radius: var(--r-full); }
+  /* min-width 0 and a pill that shrinks: with large phone text all five items still fit; labels cut with "…". */
+  .nav-item { flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: 56px; padding: 0; font-size: var(--fs-xs); }
+  .nav-item > span:not(.ic):not(.tab-badge) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-item .ic { width: min(56px, 100%); height: 32px; border-radius: var(--r-full); }
   .nav-item .ic .i { width: var(--icon-lg); height: var(--icon-lg); }
   .nav-item.active .ic { background: var(--primary-soft); }
   .nav-item .lbl { display: none; }
@@ -266,8 +268,9 @@ main { max-width: 860px; margin: 0 auto; padding: var(--s-4); }
 .banner.danger > .i { color: var(--danger); }
 .drive-card .b-actions .push-end { margin-inline-start: auto; }
 .drive-form { align-items: center; }
-.drive-form .drive-until { display: flex; align-items: center; gap: var(--s-2); margin: 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); }
-.drive-form .drive-until input { width: 9rem; min-height: var(--control-sm); direction: ltr; text-align: center; }
+/* The date field takes its own line and shrinks with the screen, so large phone text never pushes the page sideways. */
+.drive-form .drive-until { display: flex; align-items: center; gap: var(--s-2); flex: 1 1 100%; min-width: 0; margin: 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.drive-form .drive-until input { flex: 1 1 auto; width: auto; min-width: 0; max-width: 12rem; min-height: var(--control-sm); direction: ltr; text-align: center; }
 
 /* ---------- chips & segmented ---------- */
 .chips { display: flex; gap: var(--s-2); overflow-x: auto; scrollbar-width: none; margin-block-end: var(--s-4); padding-block: var(--s-1); }
@@ -285,6 +288,8 @@ main { max-width: 860px; margin: 0 auto; padding: var(--s-4); }
 .chip:hover { border-color: var(--primary); }
 .chip.active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); font-weight: var(--fw-medium); }
 .chip b { font-variant-numeric: tabular-nums; }
+/* A debtor above their group's limit during a drive (can't order). */
+.chip.blocked { border-color: var(--danger); color: var(--danger); }
 .debtors { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 
 .segmented {
@@ -320,7 +325,12 @@ main { max-width: 860px; margin: 0 auto; padding: var(--s-4); }
 }
 .list-row:last-child { border-block-end: 0; }
 a.list-row:hover { background: var(--surface-2); }
-.list-row .grow { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.list-row .grow { flex: 1 1 10rem; min-width: 0; display: grid; gap: 2px; }
+/* With large text or a narrow phone, side items (amount, badge, buttons) move to the next line instead of
+   squeezing the content under them. */
+.list-row { flex-wrap: wrap; }
+/* Actions of a row on their own line under its content, at the end (left in RTL). */
+.list-row .row-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-block-start: var(--s-1); }
 .list-row .title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
 .list-row .sub { font-size: var(--fs-xs); line-height: 1.5; color: var(--muted); }
 .list-row .amount { font-weight: var(--fw-bold); white-space: nowrap; text-align: end; font-variant-numeric: tabular-nums; }
@@ -350,6 +360,8 @@ a.list-row:hover { background: var(--surface-2); }
   border-radius: var(--r-full); font-size: var(--fs-xs); line-height: 1; font-weight: var(--fw-medium); white-space: nowrap;
   background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums;
 }
+/* A long label (e.g. "corrected; first entered as …") wraps onto a second line instead of widening the row. */
+.list-row .badge, .claim .badge { max-width: 100%; height: auto; min-height: 24px; padding-block: 3px; line-height: 1.4; white-space: normal; }
 .badge .i { width: 14px; height: 14px; stroke-width: 2; }
 .badge.debt { background: var(--danger-soft); color: var(--danger); }
 .badge.credit { background: var(--success-soft); color: var(--success); }
@@ -368,6 +380,8 @@ a.list-row:hover { background: var(--surface-2); }
 
 /* ---------- request lines: "how many of what" at a glance ---------- */
 .lines { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-block: var(--s-1); }
+.lines .line { max-width: 100%; }
+.lines .line .n { min-width: 0; overflow-wrap: anywhere; }
 .line {
   display: inline-flex; align-items: center; gap: var(--s-2); min-height: 32px;
   padding-block: 2px; padding-inline: 3px var(--s-3);
@@ -407,7 +421,9 @@ button.pay-card:hover { border-color: var(--primary); }
   direction: ltr; unicode-bidi: isolate; white-space: nowrap; text-align: end;
   font-variant-numeric: tabular-nums; letter-spacing: .03em; word-spacing: .1em;
 }
-.pay-card .n { font-size: var(--fs-lg); font-weight: var(--fw-bold); justify-self: start; }
+.pay-card .n { font-size: var(--fs-lg); font-weight: var(--fw-bold); justify-self: start; max-width: 100%; }
+/* On a very narrow screen the number breaks between its 4-digit groups rather than overflowing. */
+.pay-card .n:not(.text) { white-space: normal; }
 .pay-card .n.text { direction: rtl; white-space: normal; font-size: var(--fs-sm); font-weight: var(--fw-regular); letter-spacing: normal; word-spacing: normal; color: var(--muted); }
 .pay-card .end { justify-self: end; display: flex; align-items: center; gap: var(--s-2); }
 .pay-card .c {
@@ -446,7 +462,10 @@ button.pay-card:hover { border-color: var(--primary); }
 .stepper .qty { font-weight: var(--fw-bold); min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
 
 /* ---------- forms ---------- */
-.form { display: grid; gap: var(--s-3); }
+.form { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
+/* Fields never push a narrow screen sideways (a long option in a select, large phone text). */
+.form > *, .form label { min-width: 0; }
+select { max-width: 100%; }
 .form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: var(--s-3); align-items: end; }
 .form-grid.two { grid-template-columns: 1fr 1fr; }
 @media (max-width: 620px) { .form-grid, .form-grid.two { grid-template-columns: 1fr; } }
@@ -511,7 +530,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 .icon-btn.danger:hover { background: var(--danger-soft); }
 .icon-btn:disabled { opacity: .35; cursor: default; background: transparent; }
 .row-end { display: flex; justify-content: flex-end; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
-.actions { display: flex; align-items: center; gap: var(--s-1); flex: none; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); flex: none; max-width: 100%; }
 
 /* ---------- payments page ---------- */
 .pick-list { max-height: 320px; overflow: auto; display: grid; margin-inline: calc(var(--s-2) * -1); padding-inline: var(--s-2); }
@@ -628,6 +647,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 .claim-body { display: grid; gap: 2px; align-content: start; min-width: 0; }
 .claim-who { font-weight: var(--fw-medium); }
 .claim-amount { font-size: var(--fs-lg); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
+.claim-words { font-size: var(--fs-sm); color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+#dialog-extra { margin-block: var(--s-3) var(--s-4); }
+.confirm-amount { text-align: center; padding: var(--s-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }
+.confirm-amount .n { font-size: var(--fs-2xl); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
+.confirm-amount .n small { font-size: var(--fs-md); font-weight: var(--fw-regular); color: var(--muted); }
+.confirm-amount .w { margin-top: var(--s-1); font-weight: var(--fw-medium); }
+.confirm-amount .c { margin-top: var(--s-2); color: var(--muted); font-size: var(--fs-sm); display: inline-flex; align-items: center; gap: var(--s-1); }
 .claim-body .meta { font-size: var(--fs-xs); color: var(--muted); }
 .claim-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); align-self: end; }
 .claim-actions .btn:first-child { flex: 1; }

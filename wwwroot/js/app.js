@@ -95,7 +95,7 @@ function toast(message, isError = false) {
 }
 
 /** Fills the app's dialog and opens it; resolves with the dialog once it closes. */
-function openDialog({ title, text = '', okText, danger = true, input = null }) {
+function openDialog({ title, text = '', okText, danger = true, input = null, extra = '' }) {
   const dlg = $('#dialog');
   const field = $('#dialog-input');
   $('#dialog-title').textContent = title;
@@ -106,12 +106,17 @@ function openDialog({ title, text = '', okText, danger = true, input = null }) {
   field.required = !!input;
   field.value = '';
   field.placeholder = input?.placeholder ?? '';
+  // Extra content is built by the caller from escaped values (esc / fa), never from raw user text.
+  const more = $('#dialog-extra');
+  more.innerHTML = extra;
+  more.hidden = !extra;
+  bindAmountHints(more);
   dlg.returnValue = '';
   $('#dialog-cancel').onclick = () => dlg.close('cancel');
   return new Promise((resolve) => {
     dlg.onclose = () => resolve(dlg);
     dlg.showModal();
-    (input ? field : $('#dialog-cancel')).focus();
+    (input ? field : more.querySelector('input, select') ?? $('#dialog-cancel')).focus();
   });
 }
 
@@ -123,8 +128,8 @@ async function askText({ title, text = '', placeholder = '', okText = 'تأیی�
 }
 
 /** Yes/no question in the app's own dialog (instead of the browser's confirm). The OK button names the action. */
-async function askConfirm({ title, text = '', okText, danger = true }) {
-  const dlg = await openDialog({ title, text, okText, danger });
+async function askConfirm({ title, text = '', okText, danger = true, extra = '' }) {
+  const dlg = await openDialog({ title, text, okText, danger, extra });
   return dlg.returnValue === 'ok';
 }
 
@@ -168,13 +173,57 @@ function onSubmit(form, handler) {
   });
 }
 
-/** Shows the formatted value of amount inputs ("۴۵٬۰۰۰ تومان") under the field as the user types. */
+/** An amount in Persian words: 400000 → "چهارصد هزار". */
+function amountWords(n) {
+  n = Math.floor(Number(n));
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n === 0) return 'صفر';
+  const ones = ['', 'یک', 'دو', 'سه', 'چهار', 'پنج', 'شش', 'هفت', 'هشت', 'نه'];
+  const teens = ['ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'شانزده', 'هفده', 'هجده', 'نوزده'];
+  const tens = ['', '', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود'];
+  const hundreds = ['', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد'];
+  const scales = ['', 'هزار', 'میلیون', 'میلیارد', 'هزار میلیارد'];
+  const group = (g) => {
+    const parts = [hundreds[Math.floor(g / 100)]];
+    const r = g % 100;
+    parts.push(r >= 10 && r < 20 ? teens[r - 10] : `${tens[Math.floor(r / 10)]}${r >= 20 && r % 10 ? ' و ' : ''}${r < 10 || r % 10 ? ones[r % 10] : ''}`);
+    return parts.filter(Boolean).join(' و ');
+  };
+  const out = [];
+  for (let i = 0; n > 0 && i < scales.length; i++, n = Math.floor(n / 1000)) {
+    const g = n % 1000;
+    // A plain "هزار" only for 1,000–1,999; "دو میلیون و یک هزار" otherwise.
+    if (g) out.unshift(i === 1 && g === 1 && n < 1000 ? 'هزار' : `${group(g)}${scales[i] ? ' ' + scales[i] : ''}`);
+  }
+  return out.join(' و ');
+}
+
+/** "4000000" → "۴٬۰۰۰٬۰۰۰" (for amount fields). */
+const groupDigits = (digits) => faDigits(digits.replace(/\B(?=(\d{3})+(?!\d))/g, '٬'));
+
+/**
+ * Amount fields: thousands separators appear while typing ("۴٬۰۰۰٬۰۰۰") and the amount is spelled out under the
+ * field ("چهار میلیون تومان"), so an extra zero is hard to miss. parseAmount() reads the separated text back.
+ */
 function bindAmountHints(root) {
   root.querySelectorAll('[data-amount]').forEach((input) => {
+    if (input.dataset.amountBound) return;
+    input.dataset.amountBound = '1';
     const hint = input.parentElement.querySelector('.hint');
     const update = () => {
-      const n = parseAmount(input.value);
-      hint.textContent = input.value === '' ? '' : Number.isNaN(n) ? 'فقط عدد وارد کنید' : `${fa(n)} تومان`;
+      const raw = input.value;
+      const digits = toLatinDigits(raw).replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 13);
+      // Keep the caret after the same digit it followed before the separators moved.
+      const caret = input.selectionStart ?? raw.length;
+      const before = toLatinDigits(raw.slice(0, caret)).replace(/\D/g, '').length;
+      const text = digits ? groupDigits(digits) : '';
+      if (text !== raw) {
+        input.value = text;
+        let pos = 0;
+        for (let seen = 0; pos < text.length && seen < before; pos++) if (/[۰-۹]/.test(text[pos])) seen++;
+        if (document.activeElement === input) input.setSelectionRange(pos, pos);
+      }
+      if (hint) hint.textContent = digits ? `${amountWords(Number(digits))} تومان` : '';
     };
     input.addEventListener('input', update);
     update();
@@ -434,27 +483,52 @@ async function viewPay(_, alive) {
 
 /** Manager's «بررسی فیش‌ها» page: receipts waiting for review, then the ones reviewed lately. */
 async function viewClaims(_, alive) {
-  const data = await api('/api/admin/payment-claims');
+  const [data, cards] = await Promise.all([api('/api/admin/payment-claims'), api('/api/admin/cards')]);
   if (!alive()) return;
   view.innerHTML = `
     <div class="page-title"><h1>بررسی فیش‌ها</h1></div>
     <div class="card claims-card" id="claims"></div>
-    <div class="card">
+    <div class="card" id="claims-recent">
       <div class="card-head"><h2>اخیراً بررسی‌شده</h2></div>
+      <p class="card-intro">اگر فیشی اشتباه تأیید یا رد شده، مبلغش را اصلاح کنید یا آن را به «در انتظار» برگردانید.</p>
       <div class="list">${data.recent.length ? data.recent.map((c) => `
         <div class="list-row">
           <button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
             <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>
           <div class="grow">
-            <div class="title">${esc(c.personName)}</div>
+            <div class="title">${esc(c.personName)} ${claimBadge(c.status)} ${claimEditedBadge(c)}</div>
             ${metaHtml([money(c.amount), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : null, fmtDT(c.reviewedAt), c.reviewedBy ? esc(c.reviewedBy) : null])}
             ${c.rejectReason ? `<div class="void-note">${ic('alert', 'sm')}<span>دلیل: ${esc(c.rejectReason)}</span></div>` : ''}
+            <div class="row-foot">
+              ${c.status === 'approved' ? `<button type="button" class="btn link small" data-claim-edit="${c.id}">${ic('pencil')}اصلاح مبلغ</button>` : ''}
+              <button type="button" class="btn link small" data-claim-reopen="${c.id}" title="برگرداندن به «در انتظار» برای بررسی دوباره">${ic('undo', 'flip')}${c.status === 'approved' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>
+            </div>
           </div>
-          ${claimBadge(c.status)}
         </div>`).join('') : emptyHtml('image', 'هنوز فیشی بررسی نشده است.')}</div>
     </div>`;
   state.refreshClaims = () => route();
-  renderClaimsAdmin($('#claims'), () => route(), data.pending);
+  renderClaimsAdmin($('#claims'), () => route(), data.pending, cards);
+  $('#claims-recent').onclick = async (e) => {
+    const fix = e.target.closest('[data-claim-edit]');
+    if (fix) return editClaim(data.recent.find((c) => c.id === Number(fix.dataset.claimEdit)), cards, () => route());
+    const back = e.target.closest('[data-claim-reopen]');
+    if (!back) return;
+    const c = data.recent.find((x) => x.id === Number(back.dataset.claimReopen));
+    let reason = null;
+    if (c.status === 'approved') {
+      reason = await askText({
+        title: `تأیید فیش ${c.personName} برگردانده شود؟`,
+        text: `پرداخت ${fa(c.amount)} تومانی ابطال می‌شود (در سابقه می‌ماند) و فیش به «در انتظار» برمی‌گردد تا دوباره تأیید، اصلاح یا رد شود.`,
+        placeholder: 'دلیل، مثلاً مبلغ اشتباه تأیید شد', okText: 'بازگشت از تأیید',
+      });
+      if (!reason) return;
+    } else if (!await askConfirm({ title: `فیش ${c.personName} به «در انتظار» برگردد؟`, text: 'دلیل رد پاک می‌شود و می‌توانید دوباره بررسی‌اش کنید.', okText: 'برگرداندن', danger: false })) return;
+    try {
+      await api(`/api/admin/payment-claims/${c.id}/reopen`, { method: 'POST', body: { reason } });
+      toast('فیش به «در انتظار» برگشت.');
+      route();
+    } catch (err) { toast(err.message, true); }
+  };
 }
 
 // ---------- payments reported by employees, with a receipt photo ----------
@@ -464,6 +538,45 @@ const CLAIM_STATUS = {
 };
 const claimBadge = (s) => `<span class="badge ${CLAIM_STATUS[s][1]}">${ic(CLAIM_STATUS[s][2])}${CLAIM_STATUS[s][0]}</span>`;
 const receiptUrl = (id) => `/api/receipts/${id}`;
+/** "Corrected by the manager; first entered as …" on a receipt whose amount was changed. */
+const claimEditedBadge = (c) => (c.originalAmount != null
+  ? `<span class="badge warn" title="${c.editedAt ? fmtDT(c.editedAt) : ''}">${ic('pencil')}اصلاح‌شده؛ مبلغ اولیه ${fa(c.originalAmount)}</span>` : '');
+
+/**
+ * Manager: correct a receipt's amount or card. Before approval it only changes the receipt; after approval the
+ * recorded payment is voided with the reason and a corrected one is recorded on the same date (server side).
+ */
+async function editClaim(c, cards, onDone) {
+  if (!c) return;
+  const approved = c.status === 'approved';
+  const dlg = await openDialog({
+    title: `اصلاح فیش ${c.personName}`,
+    text: approved
+      ? 'پرداخت قبلی با دلیل شما ابطال می‌شود (در سابقه می‌ماند) و پرداخت درست با همان تاریخ ثبت می‌شود. به همکار هم خبر داده می‌شود.'
+      : 'مبلغ و کارت را مطابق عکس فیش اصلاح کنید؛ فیش در انتظار تأیید می‌ماند.',
+    okText: 'ثبت اصلاح', danger: false,
+    extra: `<div class="form">
+      <label>مبلغ درست (تومان)<input name="amount" data-amount inputmode="numeric" autocomplete="off" required value="${faDigits(c.amount)}"><span class="hint"></span></label>
+      ${cards.length ? `<label>کارت
+        <select name="cardId">${cards.map((x) => `<option value="${x.id}" ${x.id === c.paymentCardId ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}
+          <option value="" ${c.paymentCardId == null ? 'selected' : ''}>سایر (بدون کارت)</option></select></label>` : ''}
+      <label>دلیل${approved ? '' : ' (اختیاری)'}<input name="reason" maxlength="200" autocomplete="off" ${approved ? 'required' : ''} placeholder="مثلاً مبلغ فیش ۴۰۰٬۰۰۰ بود"></label>
+    </div>`,
+  });
+  if (dlg.returnValue !== 'ok') return;
+  const more = $('#dialog-extra');
+  const amount = parseAmount(more.querySelector('[name=amount]').value);
+  const cardValue = more.querySelector('[name=cardId]')?.value ?? '';
+  const reason = more.querySelector('[name=reason]').value.trim() || null;
+  if (!(amount > 0)) return toast('مبلغ را درست وارد کنید.', true);
+  try {
+    await api(`/api/admin/payment-claims/${c.id}`, {
+      method: 'PUT', body: { amount, cardId: cardValue ? Number(cardValue) : null, reason },
+    });
+    toast(`فیش ${c.personName} اصلاح شد: ${fa(amount)} تومان`);
+    onDone();
+  } catch (err) { toast(err.message, true); }
+}
 const kb = (bytes) => `${fa(Math.max(1, Math.round(bytes / 1024)))} کیلوبایت`;
 const MAX_RECEIPT_BYTES = 3 * 1024 * 1024;
 
@@ -508,8 +621,9 @@ async function compressImage(file, maxSide = 1600, quality = 0.8) {
 async function renderClaimForm(card, balance, alive) {
   const cards = balance.cards ?? [];
   const debtOf = (cardId) => (cardId === '' ? balance.general : cards.find((c) => String(c.id) === cardId)?.balance ?? 0);
-  // Pre-select the card that is owed the most.
-  const owed = [...cards].filter((c) => c.balance > 0).sort((a, b) => b.balance - a.balance)[0];
+  // Pre-select where the debt is: the card owed the most, or "other (no card)" when that debt is larger.
+  // Never default to a card that isn't owed anything, or the payment lands on the wrong card.
+  const owed = [...cards].filter((c) => c.balance > 0 && c.balance >= (balance.general ?? 0)).sort((a, b) => b.balance - a.balance)[0];
   let photo = null;
 
   card.innerHTML = `
@@ -531,7 +645,7 @@ async function renderClaimForm(card, balance, alive) {
       ${cards.length ? `<label>۲. به کدام کارت واریز کردید؟
         <select name="cardId" id="claim-card">
           ${cards.map((c) => `<option value="${c.id}" ${owed?.id === c.id ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
-          <option value="">سایر (بدون کارت)</option>
+          <option value="" ${owed ? '' : 'selected'}>سایر (بدون کارت)</option>
         </select></label>` : ''}
       <label>${cards.length ? '۳' : '۲'}. مبلغ واریزی (تومان)
         <input name="amount" id="claim-amount" inputmode="numeric" data-amount autocomplete="off" placeholder="مثلاً ۴۵۰۰۰"><span class="hint"></span>
@@ -607,6 +721,15 @@ async function renderClaimForm(card, balance, alive) {
     const n = parseAmount(fd.get('amount'));
     if (!photo) return toast('عکس فیش واریزی را پیوست کنید.', true);
     if (!(n > 0)) return toast('مبلغ واریزی را وارد کنید.', true);
+    const cardTitle = cards.find((c) => String(c.id) === String(fd.get('cardId') ?? ''))?.title;
+    if (!await askConfirm({
+      title: 'مبلغ فیش درست است؟',
+      text: 'مبلغ را با عکس فیش مقایسه کنید. بعد از ارسال فقط مسئول بوفه می‌تواند آن را اصلاح کند.',
+      extra: `<div class="confirm-amount"><div class="n">${fa(n)} <small>تومان</small></div>
+        <div class="w">${amountWords(n)} تومان</div>
+        ${cards.length ? `<div class="c">${ic('card', 'sm')}${cardTitle ? esc(cardTitle) : 'سایر (بدون کارت)'}</div>` : ''}</div>`,
+      okText: 'بله، ارسال شود', danger: false,
+    })) return;
     const body = new FormData();
     body.append('receipt', photo, 'receipt.jpg');
     body.append('amount', String(n));
@@ -641,12 +764,12 @@ async function renderClaimForm(card, balance, alive) {
             : `<button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
                  <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>`}
           <div class="grow">
-            <div class="title">${money(c.amount)}</div>
+            <div class="title">${money(c.amount)} ${claimBadge(c.status)} ${claimEditedBadge(c)}</div>
             ${metaHtml([fmtDT(c.createdAt), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : null, c.note ? esc(c.note) : null])}
             ${c.rejectReason ? `<div class="void-note">${ic('alert', 'sm')}<span>دلیل: ${esc(c.rejectReason)}</span></div>` : ''}
-          </div>
-          <div class="actions">${claimBadge(c.status)}
-            ${c.status === 'pending' ? `<button type="button" class="icon-btn small danger" data-claim-cancel="${c.id}" title="لغو" aria-label="لغو این پرداخت">${ic('trash')}</button>` : ''}
+            ${c.status === 'pending' ? `<div class="row-foot">
+              <button type="button" class="btn link danger small" data-claim-cancel="${c.id}">${ic('trash')}لغو پرداخت</button>
+            </div>` : ''}
           </div>
         </div>`).join('')}</div>` : '';
   }
@@ -654,7 +777,7 @@ async function renderClaimForm(card, balance, alive) {
 }
 
 /** Review queue: look at the receipt, then approve (records the payment) or reject with a reason. */
-function renderClaimsAdmin(card, onChange, pending) {
+function renderClaimsAdmin(card, onChange, pending, cards = []) {
   state.pendingClaims = pending.length;
   setTabBadge('claims', pending.length);
   if (!pending.length) {
@@ -673,17 +796,21 @@ function renderClaimsAdmin(card, onChange, pending) {
         <div class="claim-body">
           <div class="claim-who">${esc(c.personName)}</div>
           <div class="claim-amount">${money(c.amount)}</div>
+          <div class="claim-words">${amountWords(c.amount)} تومان ${claimEditedBadge(c)}</div>
           ${metaHtml([fmtDT(c.createdAt), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : 'بدون کارت'])}
           ${c.note ? `<div><span class="req-note">${ic('note')}${esc(c.note)}</span></div>` : ''}
           ${c.lookalikeId ? `<div><span class="badge warn">${ic('alert', 'sm')}فیش دیگری با همین مبلغ از همین همکار در همین هفته هست؛ تکراری نباشد</span></div>` : ''}
         </div>
         <div class="claim-actions">
           <button type="button" class="btn" data-claim-approve="${c.id}">${ic('check')}تأیید و ثبت پرداخت</button>
+          <button type="button" class="btn link" data-claim-edit="${c.id}">${ic('pencil')}اصلاح مبلغ</button>
           <button type="button" class="btn link danger" data-claim-reject="${c.id}">${ic('x-circle')}رد</button>
         </div>
       </article>`).join('')}
     </div>`;
   card.onclick = async (e) => {
+    const fix = e.target.closest('[data-claim-edit]');
+    if (fix) return editClaim(pending.find((c) => c.id === Number(fix.dataset.claimEdit)), cards, onChange);
     const approve = e.target.closest('[data-claim-approve]');
     const reject = e.target.closest('[data-claim-reject]');
     if (!approve && !reject) return;
@@ -1200,10 +1327,11 @@ async function renderDrive(card, drive, onPick) {
     card.innerHTML = `${ic('megaphone')}
       <div class="b-title">تسویه‌ی خریدهای ${drive.untilLabel ? `تا ${faDigits(drive.untilLabel)}` : 'قبل از شروع تسویه'} در جریان است</div>
       <div class="b-body">${metaHtml([`از ${fmtDT(drive.startedAt)}`, drive.startedBy ? `توسط ${esc(drive.startedBy)}` : null], '')}
-        ${debtors.length ? `${fa(debtors.length)} نفر بابت این بازه هنوز بدهکارند؛ تا پرداخت نکنند درخواست ثبت نمی‌کنند.` : ''}</div>
+        ${debtors.length ? debtorsSummary(debtors) : ''}</div>
       <div class="b-actions">
         ${debtors.length ? debtors.map((d) => `
-          <button type="button" class="chip" data-debtor="${d.personId}">${esc(d.name)} <b>${fa(d.balance)}</b></button>`).join('')
+          <button type="button" class="chip${d.blocked ? ' blocked' : ''}" data-debtor="${d.personId}"
+            title="${d.blocked ? 'بیش از حد مجاز؛ نمی‌تواند سفارش بدهد' : `در حد مجاز گروه (${fa(d.debtLimit)} تومان)؛ می‌تواند سفارش بدهد`}">${d.blocked ? ic('lock', 'sm') : ''}${esc(d.name)} <b>${fa(d.balance)}</b></button>`).join('')
           : `<span class="badge credit lg">${ic('check-circle')}همه تسویه کرده‌اند</span>`}
         <button type="button" class="btn danger small push-end" id="drive-end">پایان تسویه</button>
       </div>`;
@@ -1240,14 +1368,23 @@ async function renderDrive(card, drive, onPick) {
   };
 }
 
+/** "۵ نفر بدهکارند؛ ۳ نفر بیش از حد مجاز گروهشان و تا پرداخت درخواست ثبت نمی‌کنند." */
+function debtorsSummary(debtors) {
+  const blocked = debtors.filter((d) => d.blocked).length;
+  if (blocked === debtors.length) return `${fa(debtors.length)} نفر بابت این بازه هنوز بدهکارند؛ تا پرداخت نکنند درخواست ثبت نمی‌کنند.`;
+  return `${fa(debtors.length)} نفر بابت این بازه بدهکارند؛ ${blocked ? `${fa(blocked)} نفر (با قفل) بیش از حد مجاز گروهشان و تا پرداخت درخواست ثبت نمی‌کنند` : 'بدهی همه در حد مجاز گروهشان است و می‌توانند سفارش بدهند'}.`;
+}
+
 /** Colleague-facing banner while a settlement drive is on. */
 const driveBannerHtml = (b, { payLink = true } = {}) => (b.drive?.active ? `
-  <div class="banner ${b.due > 0 ? 'danger' : 'warn'}">
+  <div class="banner ${b.blocked ? 'danger' : 'warn'}">
     ${ic('megaphone')}
     <div class="b-title">درخواست تسویه حساب</div>
-    <div class="b-body">مسئول بوفه درخواست تسویه‌ی خریدهای ${b.drive.untilLabel ? `تا ${faDigits(b.drive.untilLabel)}` : 'قبل از شروع تسویه'} را ارسال کرده است. ${b.due > 0
-      ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
-      : 'بدهی این بازه را پرداخت کرده‌اید؛ ممنون.'}</div>
+    <div class="b-body">مسئول بوفه درخواست تسویه‌ی خریدهای ${b.drive.untilLabel ? `تا ${faDigits(b.drive.untilLabel)}` : 'قبل از شروع تسویه'} را ارسال کرده است. ${
+      !(b.due > 0) ? 'بدهی این بازه را پرداخت کرده‌اید؛ ممنون.'
+      : !b.blocked ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید. این مبلغ در حد مجاز گروه شما (${fa(b.debtLimit)} تومان) است و می‌توانید سفارش بدهید؛ لطفاً آن را پرداخت کنید.`
+      : b.debtLimit > 0 ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید و حد مجاز گروه شما ${fa(b.debtLimit)} تومان است؛ با احترام، تا دست‌کم <b>${fa(b.due - b.debtLimit)} تومان</b> پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
+      : `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`}</div>
     ${b.due > 0 && payLink ? `<div class="b-actions"><a class="btn small" href="#/pay">${ic('image')}ثبت فیش پرداخت</a></div>` : ''}
   </div>` : '');
 
@@ -1632,21 +1769,26 @@ function renderGroupsAdmin(card, groups) {
   let editingId = null;
   card.innerHTML = `
     <div class="card-head"><h2>گروه‌های پرسنلی</h2></div>
-    <p class="card-intro">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.</p>
+    <p class="card-intro">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.
+      <b>حد مجاز بدهی</b>: وقتی تسویه را شروع می‌کنید، اعضای گروه تا این مبلغ بدهی هنوز می‌توانند سفارش بدهند و بیشتر از آن تا پرداخت نکنند نمی‌توانند. ۰ یعنی هر بدهی‌ای جلوی سفارش را می‌گیرد؛ افراد بدون گروه هم همین‌طورند.</p>
     <div class="list">
       ${groups.length ? groups.map((g) => `
         <div class="list-row">
           <div class="icon">${ic('users')}</div>
           <div class="grow">
             <div class="title">${esc(g.name)}</div>
-            ${metaHtml([`${fa(g.memberCount)} نفر`, g.categoryCount ? `${fa(g.categoryCount)} دسته‌ی منو` : null])}
+            ${metaHtml([`${fa(g.memberCount)} نفر`, g.categoryCount ? `${fa(g.categoryCount)} دسته‌ی منو` : null,
+              g.debtLimit ? `حد مجاز بدهی ${fa(g.debtLimit)} تومان` : 'بدون حد مجاز بدهی'])}
           </div>
           ${rowActionsHtml('group-', g.id)}
         </div>`).join('') : emptyHtml('users', 'هنوز گروهی تعریف نشده است.')}
     </div>
     <form class="form mt-3" id="group-form">
-      <div class="inline-form">
-        <input name="name" required maxlength="40" placeholder="نام گروه، مثلاً شیفت شب" autocomplete="off">
+      <div class="form-grid">
+        <label>نام گروه<input name="name" required maxlength="40" placeholder="مثلاً شیفت شب" autocomplete="off"></label>
+        <label>حد مجاز بدهی در تسویه (تومان)<input name="debtLimit" data-amount inputmode="numeric" autocomplete="off" placeholder="۰"><span class="hint"></span></label>
+      </div>
+      <div class="row-end">
         <button type="button" class="btn ghost" id="group-cancel" hidden>انصراف</button>
         <button class="btn" id="group-save">افزودن گروه</button>
       </div>
@@ -1656,6 +1798,8 @@ function renderGroupsAdmin(card, groups) {
   const setEditing = (g) => {
     editingId = g?.id ?? null;
     form.reset();
+    form.elements.debtLimit.value = g?.debtLimit ? String(g.debtLimit) : '';
+    form.elements.debtLimit.dispatchEvent(new Event('input'));
     if (g) { form.elements.name.value = g.name; form.elements.name.focus(); }
     $('#group-save', card).textContent = g ? 'ذخیره' : 'افزودن گروه';
     $('#group-cancel', card).hidden = !g;
@@ -1675,8 +1819,12 @@ function renderGroupsAdmin(card, groups) {
     try { await api(`/api/admin/groups/${g.id}`, { method: 'DELETE' }); toast('گروه حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   };
+  bindAmountHints(form);
   onSubmit(form, async (fd) => {
-    await api(editingId ? `/api/admin/groups/${editingId}` : '/api/admin/groups', { method: editingId ? 'PUT' : 'POST', body: { name: fd.get('name') } });
+    const limitText = String(fd.get('debtLimit') ?? '').trim();
+    const debtLimit = limitText ? parseAmount(limitText) : 0;
+    if (!(debtLimit >= 0)) throw new Error('حد مجاز بدهی را درست وارد کنید.');
+    await api(editingId ? `/api/admin/groups/${editingId}` : '/api/admin/groups', { method: editingId ? 'PUT' : 'POST', body: { name: fd.get('name'), debtLimit } });
     toast(editingId ? 'گروه ذخیره شد.' : 'گروه اضافه شد.');
     route();
   });
@@ -1996,7 +2144,7 @@ async function viewPrices(_, alive) {
   const items = menu.flatMap((s) => s.items);
   const cart = new Map();
   // During a settlement drive someone who owes money can't send requests (the server refuses them too).
-  const blocked = balance.drive.active && balance.due > 0;
+  const blocked = !!balance.blocked;
 
   // Opening hours are in office (server) time; measure this device's clock against it once, so sections
   // open and close on time while the page stays open.
@@ -2087,13 +2235,12 @@ async function viewPrices(_, alive) {
     $('#mine').innerHTML = mine.length ? mine.map((r) => `
       <div class="list-row request-row">
         <div class="grow">
-          <div class="title">${linesHtml(r.lines)}</div>
-          ${r.editedAt ? `<div><span class="badge warn">${ic('pencil')}مسئول بوفه تغییرش داد</span></div>` : ''}
+          <div class="title">${statusBadge(r.status)}${r.editedAt ? `<span class="badge warn">${ic('pencil')}مسئول بوفه تغییرش داد</span>` : ''}</div>
+          ${linesHtml(r.lines)}
           ${metaHtml([fmtDT(r.createdAt), r.note ? esc(r.note) : null, r.rejectReason ? 'دلیل: ' + esc(r.rejectReason) : null,
             r.status === 'pending' && r.remindCount ? `${fa(r.remindCount)} بار تلنگر زدی` : null])}
+          ${r.status === 'pending' ? `<div class="row-foot">${remindButton(r)}<button class="btn link danger small" data-cancel="${r.id}">لغو درخواست</button></div>` : ''}
         </div>
-        ${statusBadge(r.status)}
-        ${r.status === 'pending' ? `<div class="actions">${remindButton(r)}<button class="btn link danger small" data-cancel="${r.id}">لغو درخواست</button></div>` : ''}
       </div>`).join('') : emptyHtml('inbox', 'هنوز درخواستی نفرستاده‌اید.');
     tickReminders();
   };
@@ -2213,13 +2360,13 @@ async function viewRequests(tab, alive) {
           ${data.recent.length ? data.recent.map((r) => `
             <div class="list-row">
               <div class="grow">
-                <div class="title">${esc(r.personName)} ${editedBadge(r)}</div>
+                <div class="title">${esc(r.personName)} ${statusBadge(r.status)} ${editedBadge(r)}</div>
                 ${linesHtml(r.lines)}
                 ${metaHtml([fmtDT(r.handledAt || r.createdAt), r.handledBy ? esc(r.handledBy) : null, r.rejectReason ? 'دلیل: ' + esc(r.rejectReason) : null])}
+                ${r.status === 'done' || r.status === 'rejected' ? `<div class="row-foot">
+                  <button class="btn link small" data-reopen="${r.id}:${r.status}" title="برگرداندن به «در انتظار» برای ویرایش و تأیید دوباره">${ic('undo', 'flip')}${r.status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>
+                </div>` : ''}
               </div>
-              ${statusBadge(r.status)}
-              ${r.status === 'done' || r.status === 'rejected'
-                ? `<button class="btn link small" data-reopen="${r.id}:${r.status}" title="برگرداندن به «در انتظار» برای ویرایش و تأیید دوباره">${ic('undo', 'flip')}${r.status === 'done' ? 'بازگشت از تأیید' : 'برگرداندن'}</button>` : ''}
             </div>`).join('') : emptyHtml('inbox', 'هنوز درخواستی رسیدگی نشده است.')}
         </div>
       </div>` : ''}`;

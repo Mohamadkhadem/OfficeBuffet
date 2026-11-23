@@ -31,6 +31,11 @@ public class PersonGroup
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";
+    /// <summary>
+    /// Allowed debt (toman) during a settlement drive: members who owe up to this much for the drive's period may
+    /// still order; above it they must pay first. 0 = any debt blocks (as for people without a group).
+    /// </summary>
+    public long DebtLimit { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -207,6 +212,10 @@ public class PaymentClaim
     /// <summary>The payment recorded when this was approved.</summary>
     public int? PaymentId { get; set; }
     public Payment? Payment { get; set; }
+    /// <summary>What the colleague first entered, when the manager later corrected the amount.</summary>
+    public long? OriginalAmount { get; set; }
+    public DateTime? EditedAt { get; set; }
+    public string? EditedBy { get; set; }
 }
 
 public static class RequestStatus
