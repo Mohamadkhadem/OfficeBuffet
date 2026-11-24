@@ -55,6 +55,7 @@ public static class PaymentClaimEndpoints
         // multipart/form-data: receipt (image), amount, cardId (optional), note (optional).
         g.MapPost("", async (HttpContext ctx, AppDb db, ReceiptStore store, WebPush push) =>
         {
+            var rial = await Currency.IsRial(db);
             var personId = AuthEndpoints.EmployeePersonId(ctx.User)!.Value;
             if (!ctx.Request.HasFormContentType) return ApiErrors.Bad("عکس فیش و مبلغ را بفرستید.");
             if (ctx.Request.ContentLength > MaxUploadBytes) return ApiErrors.Bad("حجم عکس حداکثر ۳ مگابایت است.");
@@ -95,7 +96,7 @@ public static class PaymentClaimEndpoints
             _ = push.NotifyAdmins(new
             {
                 title = $"{ctx.User.Identity!.Name} پرداخت ثبت کرد",
-                body = FaDigits($"{Money(amount)} — فیش منتظر بررسی است."),
+                body = FaDigits($"{Money(amount, rial)} — فیش منتظر بررسی است."),
                 tag = $"claim-{claim.Id}",
                 url = "/#/claims",
             });
@@ -130,6 +131,7 @@ public static class PaymentClaimEndpoints
         // Approving records the payment: the person's debt goes down by the amount, on the chosen card.
         g.MapPost("/{id:int}/approve", async (int id, HttpContext ctx, AppDb db, WebPush push) =>
         {
+            var rial = await Currency.IsRial(db);
             var claim = await db.PaymentClaims.Include(c => c.Person).FirstOrDefaultAsync(c => c.Id == id);
             if (claim == null) return ApiErrors.NotFound("پرداخت پیدا نشد.");
             if (claim.Status != ClaimStatus.Pending) return ApiErrors.Conflict("این پرداخت قبلاً بررسی شده است.");
@@ -145,13 +147,14 @@ public static class PaymentClaimEndpoints
             claim.Status = ClaimStatus.Approved;
             claim.ReviewedAt = now;
             claim.ReviewedBy = by;
+            Audit.Add(db, ctx, "claim.approve", $"فیش {claim.Id} «{claim.Person.Name}» {Money(claim.Amount, rial)}");
             // Status is a concurrency token: if a second click got here first, nothing (not even the payment) is saved.
             if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این پرداخت همین الان بررسی شد.");
 
             _ = push.NotifyPerson(claim.PersonId, new
             {
                 title = "پرداختت تأیید شد",
-                body = FaDigits($"{Money(claim.Amount)} از بدهی‌ات کم شد. ممنون!"),
+                body = FaDigits($"{Money(claim.Amount, rial)} از بدهی‌ات کم شد. ممنون!"),
                 tag = $"claim-{claim.Id}",
                 url = "/#/pay",
             });
@@ -162,6 +165,7 @@ public static class PaymentClaimEndpoints
         // voided (kept in history with the reason) and a corrected one takes its place, on the same date.
         g.MapPut("/{id:int}", async (int id, ClaimEditRequest req, HttpContext ctx, AppDb db, WebPush push) =>
         {
+            var rial = await Currency.IsRial(db);
             var claim = await db.PaymentClaims.Include(c => c.Person).Include(c => c.Payment).FirstOrDefaultAsync(c => c.Id == id);
             if (claim == null) return ApiErrors.NotFound("فیش پیدا نشد.");
             if (claim.Status is not (ClaimStatus.Pending or ClaimStatus.Approved))
@@ -177,8 +181,8 @@ public static class PaymentClaimEndpoints
 
             var now = DateTime.UtcNow;
             var by = ctx.User.Identity!.Name!;
-            var before = $"{Money(claim.Amount)}{(claim.PaymentCardId == null ? "" : $" (کارت {claim.PaymentCardId})")}";
-            var after = $"{Money(req.Amount)}{(req.CardId == null ? "" : $" (کارت {req.CardId})")}";
+            var before = $"{Money(claim.Amount, rial)}{(claim.PaymentCardId == null ? "" : $" (کارت {claim.PaymentCardId})")}";
+            var after = $"{Money(req.Amount, rial)}{(req.CardId == null ? "" : $" (کارت {req.CardId})")}";
             await using var tx = await db.Database.BeginTransactionAsync();
             if (approved && claim.Payment is { VoidedAt: null } old)
             {
@@ -211,7 +215,7 @@ public static class PaymentClaimEndpoints
             _ = push.NotifyPerson(claim.PersonId, new
             {
                 title = "مبلغ فیشت اصلاح شد",
-                body = FaDigits(approved ? $"مبلغ ثبت‌شده: {Money(req.Amount)} — {reason}" : $"مبلغ فیش: {Money(req.Amount)}؛ هنوز در انتظار بررسی است."),
+                body = FaDigits(approved ? $"مبلغ ثبت‌شده: {Money(req.Amount, rial)} — {reason}" : $"مبلغ فیش: {Money(req.Amount, rial)}؛ هنوز در انتظار بررسی است."),
                 tag = $"claim-{claim.Id}",
                 url = "/#/pay",
             });
@@ -222,6 +226,7 @@ public static class PaymentClaimEndpoints
         // where it can be approved again, corrected or rejected. A rejected one simply goes back to the queue.
         g.MapPost("/{id:int}/reopen", async (int id, VoidRequest req, HttpContext ctx, AppDb db, WebPush push) =>
         {
+            var rial = await Currency.IsRial(db);
             var claim = await db.PaymentClaims.Include(c => c.Person).Include(c => c.Payment).FirstOrDefaultAsync(c => c.Id == id);
             if (claim == null) return ApiErrors.NotFound("فیش پیدا نشد.");
             if (claim.Status is not (ClaimStatus.Approved or ClaimStatus.Rejected))
@@ -245,7 +250,7 @@ public static class PaymentClaimEndpoints
             claim.RejectReason = null;
             claim.ReviewedAt = null;
             claim.ReviewedBy = null;
-            Audit.Add(db, ctx, "claim.reopen", $"فیش {claim.Id} «{claim.Person.Name}» {Money(claim.Amount)} ({(approved ? "تأییدشده" : "ردشده")}){(reason == null ? "" : $" — {reason}")}");
+            Audit.Add(db, ctx, "claim.reopen", $"فیش {claim.Id} «{claim.Person.Name}» {Money(claim.Amount, rial)} ({(approved ? "تأییدشده" : "ردشده")}){(reason == null ? "" : $" — {reason}")}");
             // Status is the concurrency token: of two simultaneous undos (or undo + another action) only one wins.
             if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این فیش همین الان تغییر کرد؛ صفحه را تازه کنید.");
             await tx.CommitAsync();
@@ -254,7 +259,7 @@ public static class PaymentClaimEndpoints
                 _ = push.NotifyPerson(claim.PersonId, new
                 {
                     title = "تأیید فیشت برگردانده شد",
-                    body = FaDigits($"{Money(claim.Amount)} دوباره در انتظار بررسی است — {reason}"),
+                    body = FaDigits($"{Money(claim.Amount, rial)} دوباره در انتظار بررسی است — {reason}"),
                     tag = $"claim-{claim.Id}",
                     url = "/#/pay",
                 });
@@ -263,7 +268,8 @@ public static class PaymentClaimEndpoints
 
         g.MapPost("/{id:int}/reject", async (int id, VoidRequest req, HttpContext ctx, AppDb db, WebPush push) =>
         {
-            var claim = await db.PaymentClaims.FirstOrDefaultAsync(c => c.Id == id);
+            var rial = await Currency.IsRial(db);
+            var claim = await db.PaymentClaims.Include(c => c.Person).FirstOrDefaultAsync(c => c.Id == id);
             if (claim == null) return ApiErrors.NotFound("پرداخت پیدا نشد.");
             if (claim.Status != ClaimStatus.Pending) return ApiErrors.Conflict("این پرداخت قبلاً بررسی شده است.");
             var reason = Clip(req.Reason);
@@ -272,12 +278,13 @@ public static class PaymentClaimEndpoints
             claim.RejectReason = reason;
             claim.ReviewedAt = DateTime.UtcNow;
             claim.ReviewedBy = ctx.User.Identity!.Name;
+            Audit.Add(db, ctx, "claim.reject", $"فیش {claim.Id} «{claim.Person.Name}» {Money(claim.Amount, rial)} — {reason}");
             if (!await db.SaveIfUnchanged()) return ApiErrors.Conflict("این پرداخت همین الان بررسی شد.");
 
             _ = push.NotifyPerson(claim.PersonId, new
             {
                 title = "پرداختت تأیید نشد",
-                body = FaDigits($"{Money(claim.Amount)} — دلیل: {reason}"),
+                body = FaDigits($"{Money(claim.Amount, rial)} — دلیل: {reason}"),
                 tag = $"claim-{claim.Id}",
                 url = "/#/pay",
             });
@@ -335,7 +342,7 @@ public static class PaymentClaimEndpoints
     private const int LookalikeDays = 7;
     private const long MaxUploadBytes = ReceiptStore.MaxBytes + 64 * 1024;
 
-    private static string Money(long amount) => $"{amount.ToString("N0", CultureInfo.InvariantCulture)} تومان";
+    private static string Money(long amount, bool rial) => Currency.Format(amount, rial);
 
     private static string FaDigits(string s) => string.Concat(s.Select(ch => ch is >= '0' and <= '9' ? (char)('۰' + (ch - '0')) : ch));
 

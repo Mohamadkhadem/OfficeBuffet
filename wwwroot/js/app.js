@@ -3,6 +3,9 @@ import { toJalali, toGregorian } from './jalali.js';
 let view = document.getElementById('view');
 const state = { me: { loggedIn: false }, period: load('period') || 'month', refresh: null };
 const isAdmin = () => state.me.role === 'admin';
+/** مسئول بوفه (the top level): system configuration, accounts and settlement drives. بوفه‌دار can't. */
+const isSupervisor = () => isAdmin() && state.me.staffRole === 'supervisor';
+const staffRoleName = (role) => (role === 'supervisor' ? 'مسئول بوفه' : 'بوفه‌دار');
 const isEmployee = () => state.me.role === 'employee';
 
 // ---------- small utilities ----------
@@ -13,7 +16,20 @@ function save(key, value) { try { localStorage.setItem('officebuffet.' + key, va
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fa = (n) => Number(n || 0).toLocaleString('fa-IR');
-const money = (n) => `${fa(n)} <small class="money-unit">تومان</small>`;
+/*
+ * Money unit. Every amount from the API is in toman; the pantry supervisor picks whether people see and type
+ * toman or rial (×10). amt() shows an amount in that unit, parseAmount() reads one back into toman.
+ */
+const isRial = () => state.me?.currency === 'rial';
+const unitName = () => (isRial() ? 'ریال' : 'تومان');
+const toUnit = (toman) => (isRial() ? Number(toman || 0) * 10 : Number(toman || 0));
+/** An amount (toman) in the shown unit, Persian digits: 12500 → "۱۲٬۵۰۰" or "۱۲۵٬۰۰۰". */
+const amt = (toman) => fa(toUnit(toman));
+/** Plain text with the unit, for toasts and titles: "۱۲٬۵۰۰ تومان". */
+const amtText = (toman) => `${amt(toman)} ${unitName()}`;
+const money = (n) => `${amt(n)} <small class="money-unit">${unitName()}</small>`;
+/** Amount in words with the unit: "دوازده هزار و پانصد تومان". */
+const amtWords = (toman) => `${amountWords(toUnit(toman))} ${unitName()}`;
 const priceHtml = (p) => (p > 0 ? money(p) : '<span class="badge credit">رایگان</span>');
 const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
 const byName = (a, b) => a.name.localeCompare(b.name, 'fa');
@@ -80,9 +96,13 @@ function endOfJalaliDay(j) {
   return d.toISOString();
 }
 
+/** A typed amount (in the shown unit) as toman; NaN if it isn't a whole number (or, in rial, not a multiple of 10). */
 function parseAmount(s) {
   const t = toLatinDigits(s).replace(/[,،٬\s]/g, '');
-  return /^\d+$/.test(t) ? Number(t) : NaN;
+  if (!/^\d+$/.test(t)) return NaN;
+  const n = Number(t);
+  if (!isRial()) return n;
+  return n % 10 === 0 ? n / 10 : NaN;
 }
 
 let toastTimer;
@@ -203,7 +223,7 @@ const groupDigits = (digits) => faDigits(digits.replace(/\B(?=(\d{3})+(?!\d))/g,
 
 /**
  * Amount fields: thousands separators appear while typing ("۴٬۰۰۰٬۰۰۰") and the amount is spelled out under the
- * field ("چهار میلیون تومان"), so an extra zero is hard to miss. parseAmount() reads the separated text back.
+ * field ("چهار میلیون تومان", or ریال), so an extra zero is hard to miss. parseAmount() reads the separated text back.
  */
 function bindAmountHints(root) {
   root.querySelectorAll('[data-amount]').forEach((input) => {
@@ -223,7 +243,9 @@ function bindAmountHints(root) {
         for (let seen = 0; pos < text.length && seen < before; pos++) if (/[۰-۹]/.test(text[pos])) seen++;
         if (document.activeElement === input) input.setSelectionRange(pos, pos);
       }
-      if (hint) hint.textContent = digits ? `${amountWords(Number(digits))} تومان` : '';
+      if (hint) hint.textContent = !digits ? ''
+        : isRial() && Number(digits) % 10 ? 'مبلغ ریالی باید به صفر ختم شود.'
+        : `${amountWords(Number(digits))} ${unitName()}`;
     };
     input.addEventListener('input', update);
     update();
@@ -272,8 +294,8 @@ const chipsHtml = () => `<div class="chips">${PERIODS.map(([k, l]) =>
 
 // ---------- shared rendering ----------
 function balanceBadge(b) {
-  if (b > 0) return `<span class="badge debt">بدهکار ${fa(b)}</span>`;
-  if (b < 0) return `<span class="badge credit">بستانکار ${fa(-b)}</span>`;
+  if (b > 0) return `<span class="badge debt">بدهکار ${amt(b)}</span>`;
+  if (b < 0) return `<span class="badge credit">بستانکار ${amt(-b)}</span>`;
   return '<span class="badge zero">تسویه</span>';
 }
 /** Same as balanceBadge without the amount, for next to a big number that already shows it. */
@@ -324,9 +346,9 @@ function entryHtml(e, { showPerson = true, canVoid = false } = {}) {
   const sub = metaHtml([
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     fmtDT(e.createdAt),
-    isOrder && e.quantity > 1 ? `هر عدد ${fa(e.unitPrice)}` : null,
+    isOrder && e.quantity > 1 ? `هر عدد ${amt(e.unitPrice)}` : null,
     !isOrder && e.cardTitle ? `${ic('card', 'sm')} ${esc(e.cardTitle)}` : null,
-    !isOrder && e.receiptId ? `<button type="button" class="link-btn" data-receipt="${e.receiptId}" data-title="فیش پرداخت ${fa(e.amount)} تومان">${ic('image', 'sm')}مشاهده فیش</button>` : null,
+    !isOrder && e.receiptId ? `<button type="button" class="link-btn" data-receipt="${e.receiptId}" data-title="فیش پرداخت ${amtText(e.amount)}">${ic('image', 'sm')}مشاهده فیش</button>` : null,
     e.note ? esc(e.note) : null,
     `ثبت: ${esc(e.createdBy)}`,
     e.enteredAt ? `<span class="late">ثبت بعدی در ${fmtDT(e.enteredAt)}</span>` : null,
@@ -345,8 +367,8 @@ const voidNoteHtml = (e) => (e.voidedAt
 
 function settlementHtml(e, { showPerson, canVoid }) {
   const voided = !!e.voidedAt;
-  const cleared = e.clearedAmount > 0 ? `بدهی صفرشده ${fa(e.clearedAmount)} تومان`
-    : e.clearedAmount < 0 ? `طلب صفرشده ${fa(-e.clearedAmount)} تومان` : 'مانده‌ای نداشت';
+  const cleared = e.clearedAmount > 0 ? `بدهی صفرشده ${amtText(e.clearedAmount)}`
+    : e.clearedAmount < 0 ? `طلب صفرشده ${amtText(-e.clearedAmount)}` : 'مانده‌ای نداشت';
   const sub = metaHtml([
     showPerson ? `<b>${esc(e.personName)}</b>` : null,
     cleared,
@@ -401,7 +423,7 @@ async function viewReport(_, alive) {
               <a class="list-row" href="#/person/${p.id}" data-name="${esc(p.name)}">
                 <div class="grow">
                   <div class="title">${esc(p.name)} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
-                  ${metaHtml([`${fa(p.qty)} قلم`, `مصرف ${fa(p.consumed)}`, `پرداخت ${fa(p.paid)}`, p.settledUntil ? `تسویه تا ${faDigits(p.settledUntil)}` : null])}
+                  ${metaHtml([`${fa(p.qty)} قلم`, `مصرف ${amt(p.consumed)}`, `پرداخت ${amt(p.paid)}`, p.settledUntil ? `تسویه تا ${faDigits(p.settledUntil)}` : null])}
                 </div>
                 ${balanceBadge(p.balance)}
               </a>`).join('') : emptyHtml('users', 'هنوز شخصی تعریف نشده است. <a href="#/people">تعریف افراد</a>')}
@@ -474,7 +496,7 @@ async function viewPay(_, alive) {
     <div class="page-title"><h1>ثبت فیش</h1></div>
     ${driveBannerHtml(balance, { payLink: false })}
     ${balance.cards.length && balance.total > 0 ? `<div class="card">
-      <div class="card-head"><h2>${ic('card')}کجا واریز کنم؟</h2><span class="badge debt">بدهی ${fa(balance.total)}</span></div>
+      <div class="card-head"><h2>${ic('card')}کجا واریز کنم؟</h2><span class="badge debt">بدهی ${amt(balance.total)}</span></div>
       ${balanceBreakdownHtml(balance, { copy: true })}
     </div>` : ''}
     <div class="card" id="pay-claim"></div>`;
@@ -493,7 +515,7 @@ async function viewClaims(_, alive) {
       <p class="card-intro">اگر فیشی اشتباه تأیید یا رد شده، مبلغش را اصلاح کنید یا آن را به «در انتظار» برگردانید.</p>
       <div class="list">${data.recent.length ? data.recent.map((c) => `
         <div class="list-row">
-          <button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
+          <button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${amtText(c.amount)}" aria-label="دیدن عکس فیش">
             <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>
           <div class="grow">
             <div class="title">${esc(c.personName)} ${claimBadge(c.status)} ${claimEditedBadge(c)}</div>
@@ -518,7 +540,7 @@ async function viewClaims(_, alive) {
     if (c.status === 'approved') {
       reason = await askText({
         title: `تأیید فیش ${c.personName} برگردانده شود؟`,
-        text: `پرداخت ${fa(c.amount)} تومانی ابطال می‌شود (در سابقه می‌ماند) و فیش به «در انتظار» برمی‌گردد تا دوباره تأیید، اصلاح یا رد شود.`,
+        text: `پرداخت ${amtText(c.amount)}ی ابطال می‌شود (در سابقه می‌ماند) و فیش به «در انتظار» برمی‌گردد تا دوباره تأیید، اصلاح یا رد شود.`,
         placeholder: 'دلیل، مثلاً مبلغ اشتباه تأیید شد', okText: 'بازگشت از تأیید',
       });
       if (!reason) return;
@@ -540,7 +562,7 @@ const claimBadge = (s) => `<span class="badge ${CLAIM_STATUS[s][1]}">${ic(CLAIM_
 const receiptUrl = (id) => `/api/receipts/${id}`;
 /** "Corrected by the manager; first entered as …" on a receipt whose amount was changed. */
 const claimEditedBadge = (c) => (c.originalAmount != null
-  ? `<span class="badge warn" title="${c.editedAt ? fmtDT(c.editedAt) : ''}">${ic('pencil')}اصلاح‌شده؛ مبلغ اولیه ${fa(c.originalAmount)}</span>` : '');
+  ? `<span class="badge warn" title="${c.editedAt ? fmtDT(c.editedAt) : ''}">${ic('pencil')}اصلاح‌شده؛ مبلغ اولیه ${amt(c.originalAmount)}</span>` : '');
 
 /**
  * Manager: correct a receipt's amount or card. Before approval it only changes the receipt; after approval the
@@ -556,7 +578,7 @@ async function editClaim(c, cards, onDone) {
       : 'مبلغ و کارت را مطابق عکس فیش اصلاح کنید؛ فیش در انتظار تأیید می‌ماند.',
     okText: 'ثبت اصلاح', danger: false,
     extra: `<div class="form">
-      <label>مبلغ درست (تومان)<input name="amount" data-amount inputmode="numeric" autocomplete="off" required value="${faDigits(c.amount)}"><span class="hint"></span></label>
+      <label>مبلغ درست (${unitName()})<input name="amount" data-amount inputmode="numeric" autocomplete="off" required value="${faDigits(toUnit(c.amount))}"><span class="hint"></span></label>
       ${cards.length ? `<label>کارت
         <select name="cardId">${cards.map((x) => `<option value="${x.id}" ${x.id === c.paymentCardId ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}
           <option value="" ${c.paymentCardId == null ? 'selected' : ''}>سایر (بدون کارت)</option></select></label>` : ''}
@@ -573,7 +595,7 @@ async function editClaim(c, cards, onDone) {
     await api(`/api/admin/payment-claims/${c.id}`, {
       method: 'PUT', body: { amount, cardId: cardValue ? Number(cardValue) : null, reason },
     });
-    toast(`فیش ${c.personName} اصلاح شد: ${fa(amount)} تومان`);
+    toast(`فیش ${c.personName} اصلاح شد: ${amtText(amount)}`);
     onDone();
   } catch (err) { toast(err.message, true); }
 }
@@ -647,7 +669,7 @@ async function renderClaimForm(card, balance, alive) {
           ${cards.map((c) => `<option value="${c.id}" ${owed?.id === c.id ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
           <option value="" ${owed ? '' : 'selected'}>سایر (بدون کارت)</option>
         </select></label>` : ''}
-      <label>${cards.length ? '۳' : '۲'}. مبلغ واریزی (تومان)
+      <label>${cards.length ? '۳' : '۲'}. مبلغ واریزی (${unitName()})
         <input name="amount" id="claim-amount" inputmode="numeric" data-amount autocomplete="off" placeholder="مثلاً ۴۵۰۰۰"><span class="hint"></span>
       </label>
       <div class="chips tight wrap" id="claim-fill"></div>
@@ -667,9 +689,9 @@ async function renderClaimForm(card, balance, alive) {
     const cardId = cardSelect?.value ?? '';
     const own = cards.length ? debtOf(cardId) : balance.total;
     const chips = [];
-    if (own > 0) chips.push([own, cards.length ? `درج بدهی این کارت: ${fa(own)}` : `درج مبلغ بدهی: ${fa(own)}`]);
-    if (cards.length && balance.total > 0 && balance.total !== own) chips.push([balance.total, `کل بدهی: ${fa(balance.total)}`]);
-    if (balance.due > 0 && !chips.some(([n]) => n === balance.due)) chips.push([balance.due, `بدهی دوره‌ی تسویه: ${fa(balance.due)}`]);
+    if (own > 0) chips.push([own, cards.length ? `درج بدهی این کارت: ${amt(own)}` : `درج مبلغ بدهی: ${amt(own)}`]);
+    if (cards.length && balance.total > 0 && balance.total !== own) chips.push([balance.total, `کل بدهی: ${amt(balance.total)}`]);
+    if (balance.due > 0 && !chips.some(([n]) => n === balance.due)) chips.push([balance.due, `بدهی دوره‌ی تسویه: ${amt(balance.due)}`]);
     $('#claim-fill', card).innerHTML = chips.map(([n, label]) =>
       `<button type="button" class="chip" data-claim-fill="${n}">${ic('plus', 'sm')}${label}</button>`).join('');
   };
@@ -700,7 +722,7 @@ async function renderClaimForm(card, balance, alive) {
   card.onclick = async (e) => {
     if (e.target.closest('#receipt-pick, #receipt-change')) return input.click();
     const fill = e.target.closest('[data-claim-fill]');
-    if (fill) { amount.value = faDigits(fill.dataset.claimFill); amount.dispatchEvent(new Event('input')); return ready(); }
+    if (fill) { amount.value = faDigits(toUnit(fill.dataset.claimFill)); amount.dispatchEvent(new Event('input')); return ready(); }
     const cancel = e.target.closest('[data-claim-cancel]');
     if (cancel) {
       if (!await askConfirm({ title: 'این پرداخت از صف بررسی برداشته شود؟', text: 'عکس فیش هم حذف می‌شود.', okText: 'لغو پرداخت' })) return;
@@ -725,8 +747,8 @@ async function renderClaimForm(card, balance, alive) {
     if (!await askConfirm({
       title: 'مبلغ فیش درست است؟',
       text: 'مبلغ را با عکس فیش مقایسه کنید. بعد از ارسال فقط مسئول بوفه می‌تواند آن را اصلاح کند.',
-      extra: `<div class="confirm-amount"><div class="n">${fa(n)} <small>تومان</small></div>
-        <div class="w">${amountWords(n)} تومان</div>
+      extra: `<div class="confirm-amount"><div class="n">${amt(n)} <small>${unitName()}</small></div>
+        <div class="w">${amtWords(n)}</div>
         ${cards.length ? `<div class="c">${ic('card', 'sm')}${cardTitle ? esc(cardTitle) : 'سایر (بدون کارت)'}</div>` : ''}</div>`,
       okText: 'بله، ارسال شود', danger: false,
     })) return;
@@ -761,7 +783,7 @@ async function renderClaimForm(card, balance, alive) {
       <div class="list">${claims.map((c) => `
         <div class="list-row">
           ${c.status === 'cancelled' ? `<div class="icon">${ic('image')}</div>`
-            : `<button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${fa(c.amount)} تومان" aria-label="دیدن عکس فیش">
+            : `<button type="button" class="receipt-thumb" data-receipt="${c.id}" data-title="فیش ${amtText(c.amount)}" aria-label="دیدن عکس فیش">
                  <img src="${receiptUrl(c.id)}" alt="" loading="lazy" decoding="async"></button>`}
           <div class="grow">
             <div class="title">${money(c.amount)} ${claimBadge(c.status)} ${claimEditedBadge(c)}</div>
@@ -790,13 +812,13 @@ function renderClaimsAdmin(card, onChange, pending, cards = []) {
     <p class="card-intro">روی عکس بزنید تا بزرگ شود. با «تأیید» پرداخت ثبت و از بدهی همکار کم می‌شود.</p>
     <div class="claims">${pending.map((c) => `
       <article class="claim" data-claim="${c.id}">
-        <button type="button" class="claim-photo" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${fa(c.amount)} تومان" aria-label="بزرگ کردن عکس فیش">
+        <button type="button" class="claim-photo" data-receipt="${c.id}" data-title="فیش ${esc(c.personName)}، ${amtText(c.amount)}" aria-label="بزرگ کردن عکس فیش">
           <img src="${receiptUrl(c.id)}" alt="فیش ${esc(c.personName)}" loading="lazy" decoding="async">
         </button>
         <div class="claim-body">
           <div class="claim-who">${esc(c.personName)}</div>
           <div class="claim-amount">${money(c.amount)}</div>
-          <div class="claim-words">${amountWords(c.amount)} تومان ${claimEditedBadge(c)}</div>
+          <div class="claim-words">${amtWords(c.amount)} ${claimEditedBadge(c)}</div>
           ${metaHtml([fmtDT(c.createdAt), c.cardTitle ? `${ic('card', 'sm')} ${esc(c.cardTitle)}` : 'بدون کارت'])}
           ${c.note ? `<div><span class="req-note">${ic('note')}${esc(c.note)}</span></div>` : ''}
           ${c.lookalikeId ? `<div><span class="badge warn">${ic('alert', 'sm')}فیش دیگری با همین مبلغ از همین همکار در همین هفته هست؛ تکراری نباشد</span></div>` : ''}
@@ -819,7 +841,7 @@ function renderClaimsAdmin(card, onChange, pending, cards = []) {
       if (approve) {
         btn.disabled = true;
         const res = await api(`/api/admin/payment-claims/${approve.dataset.claimApprove}/approve`, { method: 'POST' });
-        toast(`پرداخت ${res.personName} ثبت شد: ${fa(res.amount)} تومان`);
+        toast(`پرداخت ${res.personName} ثبت شد: ${amtText(res.amount)}`);
       } else {
         const reason = await askText({
           title: 'رد فیش پرداخت', text: 'دلیل را بنویسید تا همکار ببیند و دوباره بفرستد.',
@@ -1034,7 +1056,7 @@ async function viewOrder(_, alive) {
           body.date = at.toISOString();
         }
         const res = await api('/api/admin/orders', { method: 'POST', body });
-        toast(`ثبت شد: ${person.name} — ${fa(res.total)} تومان${isToday() ? '' : ` (${faDigits(day.label)})`}`);
+        toast(`ثبت شد: ${person.name} — ${amtText(res.total)}${isToday() ? '' : ` (${faDigits(day.label)})`}`);
         pq.value = '';
         pq.dispatchEvent(new Event('input'));
         selectPerson(null);
@@ -1132,7 +1154,7 @@ async function viewPayments(preselectId, alive) {
         <div class="card">
           <div class="card-head"><h2>ثبت پرداخت</h2></div>
           <form class="form" id="pay">
-            <label>مبلغ (تومان)<input name="amount" id="amount" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
+            <label>مبلغ (${unitName()})<input name="amount" id="amount" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
             ${cards.length ? `<label>به کدام کارت؟
               <select name="cardId" id="pay-card">
                 <option value="">کلی (بدون کارت)</option>
@@ -1194,7 +1216,7 @@ async function viewPayments(preselectId, alive) {
       <div class="who-head"><div class="who">${esc(person?.name ?? '')}</div>${balanceBadge(b.total)}</div>
       ${p?.settledUntil ? `<div class="muted text-sm">آخرین تسویه تا ${faDigits(p.settledUntil)}</div>` : ''}
       ${balanceBreakdownHtml(b, { payButtons: true })}
-      ${b.total > 0 ? `<div class="row-end mt-3"><button type="button" class="btn secondary small" data-fill="all:${b.total}">${ic('banknote')}پرداخت کل بدهی (${fa(b.total)} تومان)</button></div>` : ''}`;
+      ${b.total > 0 ? `<div class="row-end mt-3"><button type="button" class="btn secondary small" data-fill="all:${b.total}">${ic('banknote')}پرداخت کل بدهی (${amtText(b.total)})</button></div>` : ''}`;
   };
   // One tap selects; the page scrolls to the payment form on phones.
   const pick = (id) => {
@@ -1216,8 +1238,8 @@ async function viewPayments(preselectId, alive) {
     try {
       const r = await api(`/api/admin/settlements/preview?personId=${personId()}&until=${encodeURIComponent(cutoff.toISOString())}`);
       if (seq !== previewSeq) return;
-      const amount = r.openAmount > 0 ? `بدهی ${fa(r.openAmount)} تومان`
-        : r.openAmount < 0 ? `طلب ${fa(-r.openAmount)} تومان` : 'مانده‌ای ندارد';
+      const amount = r.openAmount > 0 ? `بدهی ${amtText(r.openAmount)}`
+        : r.openAmount < 0 ? `طلب ${amtText(-r.openAmount)}` : 'مانده‌ای ندارد';
       out.innerHTML = `تا پایان ${faDigits(j.label)}: <b>${amount}</b> — با ثبت تسویه صفر می‌شود.`;
     } catch (err) {
       if (seq === previewSeq) out.textContent = err.message;
@@ -1234,7 +1256,7 @@ async function viewPayments(preselectId, alive) {
     const fill = e.target.closest('[data-fill]');
     if (fill) {
       const [card, amount] = fill.dataset.fill.split(':');
-      $('#amount').value = amount;
+      $('#amount').value = toUnit(amount);
       $('#amount').dispatchEvent(new Event('input'));
       if ($('#pay-card')) $('#pay-card').value = card === 'all' || card === 'general' ? '' : card;
       $('#amount').focus();
@@ -1282,7 +1304,7 @@ async function viewPayments(preselectId, alive) {
  */
 function balanceBreakdownHtml(b, { copy = false, payButtons = false } = {}) {
   if (!b.cards.length) return '';
-  const amount = (n) => (n > 0 ? `<span class="badge debt">بدهی ${fa(n)}</span>` : n < 0 ? `<span class="badge credit">طلب ${fa(-n)}</span>` : '<span class="badge zero">بدون بدهی</span>');
+  const amount = (n) => (n > 0 ? `<span class="badge debt">بدهی ${amt(n)}</span>` : n < 0 ? `<span class="badge credit">طلب ${amt(-n)}</span>` : '<span class="badge zero">بدون بدهی</span>');
   const fill = (key, n) => (payButtons && n > 0 ? `<button type="button" class="btn secondary small" data-fill="${key}:${n}">پرداخت</button>` : '');
   // Row 1: card title, what is owed on it, and "copy" or "pay". Row 2: the number alone, full width, one line.
   return `
@@ -1307,6 +1329,8 @@ function balanceBreakdownHtml(b, { copy = false, payButtons = false } = {}) {
 
 /** Manager's "settlement drive" card on the payments page: start (up to a date) / end, and who still owes. */
 async function renderDrive(card, drive, onPick) {
+  if (!drive.active && !isSupervisor()) { card.hidden = true; return; }
+  card.hidden = false;
   if (!drive.active) {
     card.className = 'drive-card banner';
     card.innerHTML = `${ic('megaphone')}
@@ -1331,9 +1355,9 @@ async function renderDrive(card, drive, onPick) {
       <div class="b-actions">
         ${debtors.length ? debtors.map((d) => `
           <button type="button" class="chip${d.blocked ? ' blocked' : ''}" data-debtor="${d.personId}"
-            title="${d.blocked ? 'بیش از حد مجاز؛ نمی‌تواند سفارش بدهد' : `در حد مجاز گروه (${fa(d.debtLimit)} تومان)؛ می‌تواند سفارش بدهد`}">${d.blocked ? ic('lock', 'sm') : ''}${esc(d.name)} <b>${fa(d.balance)}</b></button>`).join('')
+            title="${d.blocked ? 'بیش از حد مجاز؛ نمی‌تواند سفارش بدهد' : `در حد مجاز (${amtText(d.debtLimit)})؛ می‌تواند سفارش بدهد`}">${d.blocked ? ic('lock', 'sm') : ''}${esc(d.name)} <b>${amt(d.balance)}</b></button>`).join('')
           : `<span class="badge credit lg">${ic('check-circle')}همه تسویه کرده‌اند</span>`}
-        <button type="button" class="btn danger small push-end" id="drive-end">پایان تسویه</button>
+        ${isSupervisor() ? '<button type="button" class="btn danger small push-end" id="drive-end">پایان تسویه</button>' : ''}
       </div>`;
   }
   card.onclick = async (e) => {
@@ -1372,7 +1396,7 @@ async function renderDrive(card, drive, onPick) {
 function debtorsSummary(debtors) {
   const blocked = debtors.filter((d) => d.blocked).length;
   if (blocked === debtors.length) return `${fa(debtors.length)} نفر بابت این بازه هنوز بدهکارند؛ تا پرداخت نکنند درخواست ثبت نمی‌کنند.`;
-  return `${fa(debtors.length)} نفر بابت این بازه بدهکارند؛ ${blocked ? `${fa(blocked)} نفر (با قفل) بیش از حد مجاز گروهشان و تا پرداخت درخواست ثبت نمی‌کنند` : 'بدهی همه در حد مجاز گروهشان است و می‌توانند سفارش بدهند'}.`;
+  return `${fa(debtors.length)} نفر بابت این بازه بدهکارند؛ ${blocked ? `${fa(blocked)} نفر (با قفل) بیش از حد مجازشان و تا پرداخت درخواست ثبت نمی‌کنند` : 'بدهی همه در حد مجازشان است و می‌توانند سفارش بدهند'}.`;
 }
 
 /** Colleague-facing banner while a settlement drive is on. */
@@ -1382,9 +1406,9 @@ const driveBannerHtml = (b, { payLink = true } = {}) => (b.drive?.active ? `
     <div class="b-title">درخواست تسویه حساب</div>
     <div class="b-body">مسئول بوفه درخواست تسویه‌ی خریدهای ${b.drive.untilLabel ? `تا ${faDigits(b.drive.untilLabel)}` : 'قبل از شروع تسویه'} را ارسال کرده است. ${
       !(b.due > 0) ? 'بدهی این بازه را پرداخت کرده‌اید؛ ممنون.'
-      : !b.blocked ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید. این مبلغ در حد مجاز گروه شما (${fa(b.debtLimit)} تومان) است و می‌توانید سفارش بدهید؛ لطفاً آن را پرداخت کنید.`
-      : b.debtLimit > 0 ? `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید و حد مجاز گروه شما ${fa(b.debtLimit)} تومان است؛ با احترام، تا دست‌کم <b>${fa(b.due - b.debtLimit)} تومان</b> پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
-      : `بابت این بازه <b>${fa(b.due)} تومان</b> بدهکارید؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`}</div>
+      : !b.blocked ? `بابت این بازه <b>${amtText(b.due)}</b> بدهکارید. این مبلغ در حد مجاز بدهی شما (${amtText(b.debtLimit)}) است و می‌توانید سفارش بدهید؛ لطفاً آن را پرداخت کنید.`
+      : b.debtLimit > 0 ? `بابت این بازه <b>${amtText(b.due)}</b> بدهکارید و حد مجاز بدهی شما ${amtText(b.debtLimit)} است؛ با احترام، تا دست‌کم <b>${amtText(b.due - b.debtLimit)}</b> پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`
+      : `بابت این بازه <b>${amtText(b.due)}</b> بدهکارید؛ با احترام، تا پرداخت نکنید سفارش جدید پذیرفته نمی‌شود.`}</div>
     ${b.due > 0 && payLink ? `<div class="b-actions"><a class="btn small" href="#/pay">${ic('image')}ثبت فیش پرداخت</a></div>` : ''}
   </div>` : '');
 
@@ -1395,7 +1419,7 @@ const IMPORT_KINDS = {
     help: 'کالایی که همین عنوان را دارد تکراری ثبت نمی‌شود؛ مبلغ (و دسته، اگر ستونش را انتخاب کنید) به‌روز می‌شود. مبلغ ۰ یا خالی یعنی رایگان. دسته‌ای که هنوز وجود ندارد ساخته می‌شود.',
     fields: [
       { key: 'name', label: 'ستون عنوان کالا', required: true, guess: /^(?!.*(دسته|گروه)).*(عنوان|نام|کالا|شرح|name|item)/i },
-      { key: 'price', label: 'ستون مبلغ (تومان)', required: true, guess: /مبلغ|قیمت|بها|price/i },
+      { key: 'price', get label() { return `ستون مبلغ (${unitName()})`; }, required: true, guess: /مبلغ|قیمت|بها|price/i },
       { key: 'category', label: 'ستون دسته (اختیاری)', guess: /دسته|گروه|category/i },
     ],
   },
@@ -1556,7 +1580,36 @@ function openImport(kind, container) {
   };
 }
 
-async function viewItems(_, alive) {
+/**
+ * Tab bar for a page: `tabs` are { key, label, icon }; the first one is the page's own address (#/page),
+ * the others #/page/key. Returns the bar's HTML.
+ */
+function tabsNav(page, tabs, active, label) {
+  return `<nav class="segmented page-tabs" aria-label="${label}">
+    ${tabs.map((t, i) => `<a class="${t.key === active ? 'active' : ''}" href="#/${page}${i ? `/${t.key}` : ''}" ${t.key === active ? 'aria-current="page"' : ''}>${ic(t.icon, 'sm')}${t.label}</a>`).join('')}
+  </nav>`;
+}
+/** The tab key from the route argument, or the first tab. */
+const pickTab = (tabs, arg) => tabs.find((t) => t.key === arg)?.key ?? tabs[0].key;
+
+/** "+ new …" button for a list card's head; it opens that list's hidden form. */
+const newButtonHtml = (text, attr = 'data-new') => `<button type="button" class="btn small" ${attr}>${ic('plus')}${text}</button>`;
+/** Show or hide a form that only appears for "new" or "edit", scrolling it into view when it opens. */
+function toggleFormCard(el, open) {
+  el.hidden = !open;
+  if (open) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.querySelector('input:not([type=hidden]), select')?.focus({ preventScroll: true });
+  }
+}
+
+const ITEM_TABS = [
+  { key: 'items', label: 'کالاها', icon: 'package' },
+  { key: 'categories', label: 'دسته‌بندی منو', icon: 'menu' },
+];
+
+async function viewItems(arg, alive) {
+  const tab = pickTab(ITEM_TABS, arg);
   const [items, categories, groups, cards] = await Promise.all([
     api('/api/admin/items'), api('/api/admin/categories'), api('/api/admin/groups'), api('/api/admin/cards'),
   ]);
@@ -1567,11 +1620,17 @@ async function viewItems(_, alive) {
     { c: { id: null, name: 'بدون دسته (سایر)' }, list: items.filter((i) => i.categoryId == null) },
   ].filter((s) => s.list.length);
 
-  view.innerHTML = `
-    <div class="page-title"><h1>کالاها</h1><button type="button" class="btn ghost small" data-open-import="items">${ic('import')}ورود از اکسل</button></div>
+  const title = `<div class="page-title"><h1>کالاها</h1>${tab === 'items' ? `<button type="button" class="btn ghost small" data-open-import="items">${ic('import')}ورود از اکسل</button>` : ''}</div>
+    ${tabsNav('items', ITEM_TABS, tab, 'بخش‌های کالاها')}`;
+  if (tab === 'categories') {
+    view.innerHTML = `${title}<div class="card" id="cats"></div>`;
+    renderCategoriesAdmin($('#cats'), categories, groups, cards);
+    return;
+  }
+
+  view.innerHTML = `${title}
     <div class="card" id="import" hidden></div>
-    <div class="card" id="cats"></div>
-    <div class="card">
+    <div class="card" id="form-card" hidden>
       <div class="card-head"><h2 id="form-title">کالای جدید</h2></div>
       <form class="form" id="f">
         <div class="form-grid">
@@ -1582,16 +1641,17 @@ async function viewItems(_, alive) {
               ${categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
             </select>
           </label>
-          <label>قیمت (تومان)<input name="price" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
+          <label>قیمت (${unitName()})<input name="price" inputmode="numeric" data-amount required autocomplete="off"><span class="hint"></span></label>
         </div>
         <label class="check" id="active-wrap" hidden><input type="checkbox" name="isActive" checked> فعال (در صفحه‌ی ثبت سفارش نمایش داده شود)</label>
         <div class="row-end">
-          <button type="button" class="btn ghost" id="cancel" hidden>انصراف</button>
+          <button type="button" class="btn ghost" id="cancel">انصراف</button>
           <button class="btn" id="save">افزودن</button>
         </div>
       </form>
     </div>
     <div class="card">
+      <div class="card-head"><h2>فهرست کالاها</h2>${newButtonHtml('کالای جدید')}</div>
       ${sections.length ? sections.map(({ c, list }) => `
         <div class="cat-title">${esc(c.name)} ${c.id ? categoryRulesHtml(c) : ''}</div>
         <div class="list">
@@ -1601,32 +1661,32 @@ async function viewItems(_, alive) {
               <div class="amount">${priceHtml(i.price)}</div>
               ${rowActionsHtml('', i.id)}
             </div>`).join('')}
-        </div>`).join('') : emptyHtml('package', 'هنوز کالایی تعریف نشده است؛ با فرم بالا اولین کالا را اضافه کنید.')}
+        </div>`).join('') : emptyHtml('package', 'هنوز کالایی تعریف نشده است؛ با «کالای جدید» اولین کالا را اضافه کنید.')}
     </div>`;
 
   const form = $('#f');
   const fields = form.elements;
   bindAmountHints(view);
   let editingId = null;
-  const setEditing = (item) => {
+  const setEditing = (item, open = true) => {
     editingId = item?.id ?? null;
     form.reset();
     if (item) {
       fields.name.value = item.name;
       fields.categoryId.value = item.categoryId ?? '';
-      fields.price.value = item.price;
+      fields.price.value = toUnit(item.price);
       fields.isActive.checked = item.isActive;
     }
     fields.price.dispatchEvent(new Event('input'));
     $('#form-title').textContent = item ? `ویرایش «${item.name}»` : 'کالای جدید';
     $('#save').textContent = item ? 'ذخیره' : 'افزودن';
-    $('#cancel').hidden = !item;
     $('#active-wrap').hidden = !item;
-    if (item) { form.scrollIntoView({ behavior: 'smooth', block: 'center' }); fields.name.focus(); }
+    toggleFormCard($('#form-card'), open);
   };
 
-  $('#cancel').addEventListener('click', () => setEditing(null));
+  $('#cancel').addEventListener('click', () => setEditing(null, false));
   view.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-new]')) return setEditing(null);
     const edit = e.target.closest('[data-edit]');
     if (edit) return setEditing(items.find((i) => i.id == edit.dataset.edit));
     const del = e.target.closest('[data-del]');
@@ -1646,7 +1706,6 @@ async function viewItems(_, alive) {
     toast(editingId ? 'ذخیره شد.' : 'کالا اضافه شد.');
     route();
   });
-  renderCategoriesAdmin($('#cats'), categories, groups, cards);
 }
 
 // ---------- menu categories and staff groups ----------
@@ -1670,7 +1729,7 @@ const rowActionsHtml = (kind, id, extra = '') => `
 function renderCategoriesAdmin(card, categories, groups, cards) {
   let editingId = null;
   card.innerHTML = `
-    <div class="card-head"><h2>دسته‌بندی منو</h2></div>
+    <div class="card-head"><h2>دسته‌بندی منو</h2>${newButtonHtml('دسته‌ی جدید', 'data-cat-new')}</div>
     <p class="card-intro">
       ساعت کاری: همکاران فقط در همان بازه از دسته درخواست می‌دهند (بدون ساعت، همیشه باز).
       گروه پرسنلی: دسته فقط برای همان گروه نمایش داده می‌شود.
@@ -1688,7 +1747,8 @@ function renderCategoriesAdmin(card, categories, groups, cards) {
             <button type="button" class="icon-btn small" data-cat-move="${c.id}:1" ${i === categories.length - 1 ? 'disabled' : ''} title="پایین‌تر" aria-label="پایین‌تر">${ic('chevron-down')}</button>`)}
         </div>`).join('') : emptyHtml('package', 'هنوز دسته‌ای تعریف نشده است.')}
     </div>
-    <form class="form mt-3" id="cat-form">
+    <form class="form mt-3 sub-form" id="cat-form" hidden>
+      <h3 id="cat-form-title">دسته‌ی جدید</h3>
       <div class="form-grid">
         <label>نام دسته<input name="name" required maxlength="40" placeholder="مثلاً صبحانه" autocomplete="off"></label>
         <label>از ساعت (اختیاری)<input name="startTime" type="time"></label>
@@ -1709,13 +1769,13 @@ function renderCategoriesAdmin(card, categories, groups, cards) {
         ${cards.length ? '' : '<span class="hint">کارت‌ها در صفحه‌ی «تنظیمات» تعریف می‌شوند.</span>'}
       </label>
       <div class="row-end">
-        <button type="button" class="btn ghost" id="cat-cancel" hidden>انصراف</button>
+        <button type="button" class="btn ghost" id="cat-cancel">انصراف</button>
         <button class="btn" id="cat-save">افزودن دسته</button>
       </div>
     </form>`;
 
   const form = $('#cat-form', card);
-  const setEditing = (c) => {
+  const setEditing = (c, open = true) => {
     editingId = c?.id ?? null;
     form.reset();
     if (c) {
@@ -1724,14 +1784,14 @@ function renderCategoriesAdmin(card, categories, groups, cards) {
       form.elements.endTime.value = c.endTime ?? '';
       form.elements.personGroupId.value = c.personGroupId ?? '';
       form.elements.paymentCardId.value = c.paymentCardId ?? '';
-      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      form.elements.name.focus();
     }
+    $('#cat-form-title', card).textContent = c ? `ویرایش «${c.name}»` : 'دسته‌ی جدید';
     $('#cat-save', card).textContent = c ? 'ذخیره' : 'افزودن دسته';
-    $('#cat-cancel', card).hidden = !c;
+    toggleFormCard(form, open);
   };
-  $('#cat-cancel', card).onclick = () => setEditing(null);
+  $('#cat-cancel', card).onclick = () => setEditing(null, false);
   card.onclick = async (e) => {
+    if (e.target.closest('[data-cat-new]')) return setEditing(null);
     const edit = e.target.closest('[data-cat-edit]');
     if (edit) return setEditing(categories.find((c) => c.id == edit.dataset.catEdit));
     const move = e.target.closest('[data-cat-move]');
@@ -1768,9 +1828,9 @@ function renderCategoriesAdmin(card, categories, groups, cards) {
 function renderGroupsAdmin(card, groups) {
   let editingId = null;
   card.innerHTML = `
-    <div class="card-head"><h2>گروه‌های پرسنلی</h2></div>
+    <div class="card-head"><h2>گروه‌های پرسنلی</h2>${newButtonHtml('گروه جدید', 'data-group-new')}</div>
     <p class="card-intro">مثلاً «شیفت شب» یا «مدیران». هر شخص می‌تواند در یک گروه باشد یا بدون گروه بماند. در صفحه‌ی «کالاها» می‌توانید یک دسته‌ی منو را فقط به یک گروه بدهید.
-      <b>حد مجاز بدهی</b>: وقتی تسویه را شروع می‌کنید، اعضای گروه تا این مبلغ بدهی هنوز می‌توانند سفارش بدهند و بیشتر از آن تا پرداخت نکنند نمی‌توانند. ۰ یعنی هر بدهی‌ای جلوی سفارش را می‌گیرد؛ افراد بدون گروه هم همین‌طورند.</p>
+      <b>حد مجاز بدهی</b>: وقتی تسویه را شروع می‌کنید، اعضای گروه تا این مبلغ بدهی هنوز می‌توانند سفارش بدهند و بیشتر از آن تا پرداخت نکنند نمی‌توانند. ۰ یعنی هر بدهی‌ای جلوی سفارش را می‌گیرد؛ افراد بدون گروه هم همین‌طورند. حد مجاز شخصی (در فرم هر شخص) بر حد گروه اولویت دارد.</p>
     <div class="list">
       ${groups.length ? groups.map((g) => `
         <div class="list-row">
@@ -1778,34 +1838,37 @@ function renderGroupsAdmin(card, groups) {
           <div class="grow">
             <div class="title">${esc(g.name)}</div>
             ${metaHtml([`${fa(g.memberCount)} نفر`, g.categoryCount ? `${fa(g.categoryCount)} دسته‌ی منو` : null,
-              g.debtLimit ? `حد مجاز بدهی ${fa(g.debtLimit)} تومان` : 'بدون حد مجاز بدهی'])}
+              g.debtLimit ? `حد مجاز بدهی ${amtText(g.debtLimit)}` : 'بدون حد مجاز بدهی'])}
           </div>
           ${rowActionsHtml('group-', g.id)}
         </div>`).join('') : emptyHtml('users', 'هنوز گروهی تعریف نشده است.')}
     </div>
-    <form class="form mt-3" id="group-form">
+    <form class="form mt-3 sub-form" id="group-form" hidden>
+      <h3 id="group-form-title">گروه جدید</h3>
       <div class="form-grid">
         <label>نام گروه<input name="name" required maxlength="40" placeholder="مثلاً شیفت شب" autocomplete="off"></label>
-        <label>حد مجاز بدهی در تسویه (تومان)<input name="debtLimit" data-amount inputmode="numeric" autocomplete="off" placeholder="۰"><span class="hint"></span></label>
+        <label>حد مجاز بدهی در تسویه (${unitName()})<input name="debtLimit" data-amount inputmode="numeric" autocomplete="off" placeholder="۰"><span class="hint"></span></label>
       </div>
       <div class="row-end">
-        <button type="button" class="btn ghost" id="group-cancel" hidden>انصراف</button>
+        <button type="button" class="btn ghost" id="group-cancel">انصراف</button>
         <button class="btn" id="group-save">افزودن گروه</button>
       </div>
     </form>`;
 
   const form = $('#group-form', card);
-  const setEditing = (g) => {
+  const setEditing = (g, open = true) => {
     editingId = g?.id ?? null;
     form.reset();
-    form.elements.debtLimit.value = g?.debtLimit ? String(g.debtLimit) : '';
+    form.elements.debtLimit.value = g?.debtLimit ? String(toUnit(g.debtLimit)) : '';
     form.elements.debtLimit.dispatchEvent(new Event('input'));
-    if (g) { form.elements.name.value = g.name; form.elements.name.focus(); }
+    if (g) form.elements.name.value = g.name;
+    $('#group-form-title', card).textContent = g ? `ویرایش «${g.name}»` : 'گروه جدید';
     $('#group-save', card).textContent = g ? 'ذخیره' : 'افزودن گروه';
-    $('#group-cancel', card).hidden = !g;
+    toggleFormCard(form, open);
   };
-  $('#group-cancel', card).onclick = () => setEditing(null);
+  $('#group-cancel', card).onclick = () => setEditing(null, false);
   card.onclick = async (e) => {
+    if (e.target.closest('[data-group-new]')) return setEditing(null);
     const edit = e.target.closest('[data-group-edit]');
     if (edit) return setEditing(groups.find((g) => g.id == edit.dataset.groupEdit));
     const del = e.target.closest('[data-group-del]');
@@ -1830,7 +1893,13 @@ function renderGroupsAdmin(card, groups) {
   });
 }
 
-async function viewPeople(_, alive) {
+const PEOPLE_TABS = [
+  { key: 'people', label: 'افراد', icon: 'user' },
+  { key: 'groups', label: 'گروه‌های پرسنلی', icon: 'users' },
+];
+
+async function viewPeople(arg, alive) {
+  const tab = pickTab(PEOPLE_TABS, arg);
   const [people, summary, groups] = await Promise.all([api('/api/admin/people'), api('/api/report/summary'), api('/api/admin/groups')]);
   if (!alive()) return;
   const balance = new Map(summary.people.map((p) => [p.id, p.balance]));
@@ -1838,10 +1907,17 @@ async function viewPeople(_, alive) {
   people.sort((a, b) => b.isActive - a.isActive || byName(a, b));
   const missing = people.filter((p) => p.isActive && !p.nationalCode).length;
 
-  view.innerHTML = `
-    <div class="page-title"><h1>افراد</h1><button type="button" class="btn ghost small" data-open-import="people">${ic('import')}ورود از اکسل</button></div>
+  const title = `<div class="page-title"><h1>افراد</h1>${tab === 'people' ? `<button type="button" class="btn ghost small" data-open-import="people">${ic('import')}ورود از اکسل</button>` : ''}</div>
+    ${tabsNav('people', PEOPLE_TABS, tab, 'بخش‌های افراد')}`;
+  if (tab === 'groups') {
+    view.innerHTML = `${title}<div class="card" id="groups"></div>`;
+    renderGroupsAdmin($('#groups'), groups);
+    return;
+  }
+
+  view.innerHTML = `${title}
     <div class="card" id="import" hidden></div>
-    <div class="card">
+    <div class="card" id="form-card" hidden>
       <div class="card-head"><h2 id="form-title">شخص جدید</h2></div>
       <form class="form" id="f">
         <div class="form-grid">
@@ -1850,18 +1926,21 @@ async function viewPeople(_, alive) {
           <label>گروه پرسنلی
             <select name="groupId">
               <option value="">بدون گروه</option>
-              ${groups.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('')}
+              ${groups.map((g) => `<option value="${g.id}">${esc(g.name)}${g.debtLimit ? ` (حد مجاز ${amt(g.debtLimit)})` : ''}</option>`).join('')}
             </select>
           </label>
+          <label>حد مجاز بدهی شخصی (${unitName()})<input name="debtLimit" data-amount inputmode="numeric" autocomplete="off" placeholder="خالی = حد مجاز گروه"><span class="hint"></span></label>
         </div>
+        <p class="hint">اگر برای شخص حد مجاز بنویسید، در زمان تسویه همین ملاک است، چه بیشتر از حد گروهش باشد چه کمتر. خالی بگذارید تا حد گروه اعمال شود. ۰ یعنی هر بدهی‌ای جلوی سفارشش را می‌گیرد.</p>
         <label class="check" id="active-wrap" hidden><input type="checkbox" name="isActive" checked> فعال (در ثبت سفارش نمایش داده شود و بتواند وارد شود)</label>
         <div class="row-end">
-          <button type="button" class="btn ghost" id="cancel" hidden>انصراف</button>
+          <button type="button" class="btn ghost" id="cancel">انصراف</button>
           <button class="btn" id="save">افزودن شخص</button>
         </div>
       </form>
     </div>
     <div class="card">
+      <div class="card-head"><h2>فهرست افراد</h2>${newButtonHtml('شخص جدید')}</div>
       ${missing ? `<div class="banner warn">${ic('alert')}<div class="b-title">${fa(missing)} نفر هنوز کد ملی ندارند</div><div class="b-body">تا کد ملی ثبت نشود نمی‌توانند وارد شوند.</div></div>` : ''}
       <input class="search" id="q" placeholder="جستجوی نام یا کد ملی…" autocomplete="off">
       <div class="list" id="list">
@@ -1869,39 +1948,38 @@ async function viewPeople(_, alive) {
           <div class="list-row" data-name="${esc(p.name)} ${esc(p.nationalCode ?? '')} ${faDigits(p.nationalCode ?? '')} ${esc(groupName.get(p.groupId) ?? '')}">
             <div class="grow">
               <div class="title">${esc(p.name)} ${p.groupId ? `<span class="badge warn">${ic('users')}${esc(groupName.get(p.groupId))}</span>` : ''} ${p.isActive ? '' : '<span class="badge off">غیرفعال</span>'}</div>
-              <div class="sub">${p.nationalCode ? `کد ملی ${faDigits(p.nationalCode)}` : '<span class="late">بدون کد ملی</span>'}</div>
+              <div class="sub">${p.nationalCode ? `کد ملی ${faDigits(p.nationalCode)}` : '<span class="late">بدون کد ملی</span>'}${p.debtLimit != null ? ` · حد مجاز شخصی ${amtText(p.debtLimit)}` : ''}</div>
             </div>
             ${balanceBadge(balance.get(p.id) ?? 0)}
             ${rowActionsHtml('', p.id)}
-          </div>`).join('') : emptyHtml('users', 'هنوز شخصی تعریف نشده است؛ با فرم بالا اضافه کنید یا از اکسل وارد کنید.')}
+          </div>`).join('') : emptyHtml('users', 'هنوز شخصی تعریف نشده است؛ با «شخص جدید» اضافه کنید یا از اکسل وارد کنید.')}
       </div>
-    </div>
-    <div class="card" id="groups"></div>`;
+    </div>`;
 
-  renderGroupsAdmin($('#groups'), groups);
   bindSearch($('#q'), $('#list'));
   const form = $('#f');
   const fields = form.elements;
   let editingId = null;
-  const setEditing = (p) => {
+  const setEditing = (p, open = true) => {
     editingId = p?.id ?? null;
     form.reset();
     if (p) {
       fields.name.value = p.name;
       fields.nationalCode.value = p.nationalCode ? faDigits(p.nationalCode) : '';
       fields.groupId.value = p.groupId ?? '';
+      fields.debtLimit.value = p.debtLimit != null ? String(toUnit(p.debtLimit)) : '';
       fields.isActive.checked = p.isActive;
-      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      fields.name.focus();
     }
+    fields.debtLimit.dispatchEvent(new Event('input'));
     $('#form-title').textContent = p ? `ویرایش «${p.name}»` : 'شخص جدید';
     $('#save').textContent = p ? 'ذخیره' : 'افزودن شخص';
-    $('#cancel').hidden = !p;
     $('#active-wrap').hidden = !p;
+    toggleFormCard($('#form-card'), open);
   };
-  $('#cancel').addEventListener('click', () => setEditing(null));
+  $('#cancel').addEventListener('click', () => setEditing(null, false));
 
   view.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-new]')) return setEditing(null);
     const edit = e.target.closest('[data-edit]');
     if (edit) return setEditing(people.find((p) => p.id == edit.dataset.edit));
     const del = e.target.closest('[data-del]');
@@ -1911,11 +1989,16 @@ async function viewPeople(_, alive) {
     try { await api(`/api/admin/people/${p.id}`, { method: 'DELETE' }); toast('حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   });
+  bindAmountHints(form);
   onSubmit(form, async (fd) => {
+    const limitText = String(fd.get('debtLimit') ?? '').trim();
+    const debtLimit = limitText ? parseAmount(limitText) : null;
+    if (debtLimit !== null && !(debtLimit >= 0)) throw new Error('حد مجاز بدهی را درست وارد کنید.');
     const body = {
       name: fd.get('name'),
       nationalCode: toLatinDigits(fd.get('nationalCode')),
       groupId: fd.get('groupId') ? Number(fd.get('groupId')) : null,
+      debtLimit,
       isActive: editingId ? fd.get('isActive') === 'on' : true,
     };
     await api(editingId ? `/api/admin/people/${editingId}` : '/api/admin/people', { method: editingId ? 'PUT' : 'POST', body });
@@ -1924,14 +2007,38 @@ async function viewPeople(_, alive) {
   });
 }
 
-async function viewSettings(_, alive) {
-  const users = await api('/api/admin/users');
+/** Settings tabs; the operator only gets the first two. */
+const SETTINGS_TABS = [
+  { key: 'general', label: 'عمومی', icon: 'sliders' },
+  { key: 'accounts', label: 'حساب‌ها', operatorLabel: 'رمز عبور', icon: 'user' },
+  { key: 'cards', label: 'کارت‌ها', icon: 'card', supervisor: true },
+  { key: 'security', label: 'امنیت', icon: 'lock', supervisor: true },
+];
+
+async function viewSettings(arg, alive) {
+  const supervisor = isSupervisor();
+  const tabs = SETTINGS_TABS.filter((t) => supervisor || !t.supervisor);
+  const tab = tabs.find((t) => t.key === arg)?.key ?? 'general';
+  const users = supervisor && tab === 'accounts' ? await api('/api/admin/users') : [];
   if (!alive()) return;
-  view.innerHTML = `
-    <div class="page-title"><h1>تنظیمات</h1></div>
+  const nav = tabsNav('settings', tabs.map((t) => ({ ...t, label: !supervisor && t.operatorLabel ? t.operatorLabel : t.label })), tab, 'بخش‌های تنظیمات');
+  const general = `
     <div class="card" id="push"></div>
-    <div class="card" id="cards"></div>
-    <div class="cols">
+    ${supervisor ? `<div class="card">
+      <div class="card-head"><h2>${ic('banknote')}واحد پول</h2></div>
+      <p class="card-intro">همه‌ی مبالغ برنامه، برای همه، به این واحد نشان داده و وارد می‌شوند. عوض کردنش هیچ عددی را تغییر نمی‌دهد؛ فقط نمایش عوض می‌شود (هر تومان = ۱۰ ریال).</p>
+      <form class="chips tight wrap" id="currency">
+        <label class="chip${isRial() ? '' : ' active'}"><input type="radio" name="currency" value="toman" ${isRial() ? '' : 'checked'} hidden>تومان</label>
+        <label class="chip${isRial() ? ' active' : ''}"><input type="radio" name="currency" value="rial" ${isRial() ? 'checked' : ''} hidden>ریال</label>
+      </form>
+    </div>` : ''}
+    <div class="card">
+      <div class="card-head"><h2>درباره</h2>${state.me.version ? `<span class="badge zero">نسخه ${faDigits(state.me.version)}</span>` : ''}</div>
+      <p class="muted">بوفه (OfficeBuffet) نرم‌افزار متن‌باز با مجوز MIT است.
+        <a href="${REPO_URL}" target="_blank" rel="noopener">کد و نسخه‌های جدید در GitHub</a></p>
+    </div>`;
+  const accounts = `
+    <div class="${supervisor ? 'cols' : ''}">
       <div class="card">
         <div class="card-head"><h2>تغییر رمز عبور</h2></div>
         <form class="form" id="pw">
@@ -1940,61 +2047,98 @@ async function viewSettings(_, alive) {
           <div class="row-end"><button class="btn">تغییر رمز</button></div>
         </form>
       </div>
-      <div class="card">
-        <div class="card-head"><h2>حساب‌های مسئول</h2></div>
+      ${supervisor ? `<div class="card">
+        <div class="card-head"><h2>حساب‌ها</h2></div>
+        <p class="card-intro"><b>مسئول بوفه</b> همه‌کاره است. <b>بوفه‌دار</b> کارهای روزانه را انجام می‌دهد: درخواست‌ها، ثبت سفارش، بررسی فیش، پرداخت، تسویه‌ی افراد و گزارش‌ها.
+          تنظیمات سیستم (کالاها و منو، افراد و گروه‌ها و حد مجاز بدهی، کارت‌ها، حساب‌ها، رویدادهای امنیتی) و شروع و پایان تسویه‌ی همگانی فقط با مسئول بوفه است.</p>
         <div class="list">
           ${users.map((u) => `
             <div class="list-row">
-              <div class="grow"><div class="title">${esc(u.username)}</div><div class="sub">ساخته‌شده ${fmtDT(u.createdAt)}</div></div>
-              ${u.username === state.me.username ? '<span class="badge zero">شما</span>' : `<button type="button" class="icon-btn small danger" data-del="${u.id}" title="حذف" aria-label="حذف ${esc(u.username)}">${ic('trash')}</button>`}
+              <div class="grow">
+                <div class="title">${esc(u.username)} <span class="badge ${u.role === 'supervisor' ? 'wait' : 'zero'}">${staffRoleName(u.role)}</span></div>
+                <div class="sub">ساخته‌شده ${fmtDT(u.createdAt)}</div>
+              </div>
+              ${u.username === state.me.username ? '<span class="badge zero">شما</span>' : `<div class="actions">
+                <button type="button" class="btn link small" data-role="${u.id}">${u.role === 'supervisor' ? 'تبدیل به بوفه‌دار' : 'تبدیل به مسئول بوفه'}</button>
+                <button type="button" class="icon-btn small danger" data-del="${u.id}" title="حذف" aria-label="حذف ${esc(u.username)}">${ic('trash')}</button></div>`}
             </div>`).join('')}
         </div>
         <form class="form mt-3" id="add">
           <label>نام کاربری<input name="username" autocomplete="off" required minlength="3" dir="auto"></label>
           <label>رمز عبور<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
-          <div class="row-end"><button class="btn">افزودن مسئول</button></div>
+          <label>سطح دسترسی
+            <select name="role">
+              <option value="operator">بوفه‌دار</option>
+              <option value="supervisor">مسئول بوفه</option>
+            </select>
+          </label>
+          <div class="row-end"><button class="btn">افزودن حساب</button></div>
         </form>
-      </div>
-    </div>
-    <div class="card" id="audit"></div>
-    <div class="card">
-      <div class="card-head"><h2>درباره</h2>${state.me.version ? `<span class="badge zero">نسخه ${faDigits(state.me.version)}</span>` : ''}</div>
-      <p class="muted">بوفه (OfficeBuffet) نرم‌افزار متن‌باز با مجوز MIT است.
-        <a href="${REPO_URL}" target="_blank" rel="noopener">کد و نسخه‌های جدید در GitHub</a></p>
+      </div>` : ''}
     </div>`;
+  const body = { general, accounts, cards: '<div class="card" id="cards"></div>', security: '<div class="card" id="audit"></div>' }[tab];
+  view.innerHTML = `
+    <div class="page-title"><h1>تنظیمات</h1></div>
+    ${nav}
+    ${body}`;
 
-  onSubmit($('#pw'), async (fd) => {
+  if (tab === 'accounts') onSubmit($('#pw'), async (fd) => {
     await api('/api/auth/password', { method: 'POST', body: { current: fd.get('current'), new: fd.get('new') } });
     toast('رمز عبور تغییر کرد.');
     $('#pw').reset();
   });
-  onSubmit($('#add'), async (fd) => {
-    await api('/api/admin/users', { method: 'POST', body: { username: fd.get('username'), password: fd.get('password') } });
-    toast('مسئول جدید اضافه شد.');
+  if (supervisor && tab === 'general') $('#currency').onchange = async (e) => {
+    const currency = e.target.value;
+    try {
+      await api('/api/admin/settings/currency', { method: 'PUT', body: { currency } });
+      await refreshMe();
+      toast(`از این به بعد همه‌ی مبالغ به ${unitName()} است.`);
+      renderShell('settings');
+      route();
+    } catch (err) { toast(err.message, true); route(); }
+  };
+  if (supervisor && tab === 'accounts') onSubmit($('#add'), async (fd) => {
+    await api('/api/admin/users', { method: 'POST', body: { username: fd.get('username'), password: fd.get('password'), role: fd.get('role') } });
+    toast(`حساب ${staffRoleName(fd.get('role'))} اضافه شد.`);
     route();
   });
   view.addEventListener('click', async (e) => {
+    const roleBtn = e.target.closest('[data-role]');
+    if (roleBtn) {
+      const u = users.find((x) => x.id == roleBtn.dataset.role);
+      const next = u.role === 'supervisor' ? 'operator' : 'supervisor';
+      if (!await askConfirm({
+        title: `«${u.username}» ${staffRoleName(next)} شود؟`,
+        text: next === 'supervisor' ? 'به همه‌ی تنظیمات سیستم و حساب‌ها دسترسی پیدا می‌کند.' : 'دیگر به تنظیمات سیستم، حساب‌ها و شروع و پایان تسویه دسترسی ندارد.',
+        okText: 'تغییر سطح', danger: next === 'supervisor',
+      })) return;
+      try { await api(`/api/admin/users/${u.id}/role`, { method: 'PUT', body: { role: next } }); toast('سطح دسترسی عوض شد؛ باید دوباره وارد شود.'); route(); }
+      catch (err) { toast(err.message, true); }
+      return;
+    }
     const del = e.target.closest('[data-del]');
     if (!del) return;
     const user = users.find((u) => u.id == del.dataset.del);
-    if (!await askConfirm({ title: `حساب مسئول «${user?.username ?? ''}» حذف شود؟`, okText: 'حذف حساب' })) return;
+    if (!await askConfirm({ title: `حساب ${staffRoleName(user?.role)} «${user?.username ?? ''}» حذف شود؟`, okText: 'حذف حساب' })) return;
     try { await api(`/api/admin/users/${del.dataset.del}`, { method: 'DELETE' }); toast('حذف شد.'); route(); }
     catch (err) { toast(err.message, true); }
   });
-  renderPushCard(alive);
-  renderCardsAdmin($('#cards'), alive);
-  renderAuditLog($('#audit'), alive);
+  if (tab === 'general') renderPushCard(alive);
+  if (tab === 'cards') renderCardsAdmin($('#cards'), alive);
+  if (tab === 'security') renderAuditLog($('#audit'), alive);
 }
 
 // ---------- security log (read-only) ----------
 const AUDIT_ACTIONS = {
   'admin.setup': 'ساخت اولین حساب مسئول',
-  'admin.login': 'ورود مسئول',
+  'admin.login': 'ورود مسئول یا بوفه‌دار',
   'admin.login_failed': 'ورود ناموفق مسئول',
   'admin.password': 'تغییر رمز',
   'admin.password_failed': 'رمز فعلی اشتباه (تغییر رمز)',
-  'admin.user_create': 'افزودن حساب مسئول',
-  'admin.user_delete': 'حذف حساب مسئول',
+  'admin.user_create': 'افزودن حساب',
+  'admin.user_delete': 'حذف حساب',
+  'admin.user_role': 'تغییر سطح دسترسی',
+  'settings.currency': 'تغییر واحد پول',
   'employee.login': 'ورود همکار',
   'employee.login_failed': 'ورود ناموفق با کد ملی',
   'card.create': 'افزودن کارت',
@@ -2006,8 +2150,16 @@ const AUDIT_ACTIONS = {
   'person.deactivate': 'غیرفعال‌کردن شخص',
   'import.items': 'ورود کالاها از فایل',
   'import.people': 'ورود افراد از فایل',
+  'claim.approve': 'تأیید فیش',
+  'claim.reject': 'رد فیش',
+  'claim.edit': 'اصلاح مبلغ فیش',
+  'claim.reopen': 'بازگشت فیش به انتظار',
+  'group.debt-limit': 'تغییر حد مجاز بدهی گروه',
+  'person.debt-limit': 'تغییر حد مجاز بدهی شخص',
+  'drive.start': 'شروع تسویه‌ی همگانی',
+  'drive.end': 'پایان تسویه‌ی همگانی',
 };
-const AUDIT_WARN = new Set(['admin.login_failed', 'employee.login_failed', 'admin.password_failed', 'card.update', 'card.delete', 'admin.user_create', 'admin.user_delete']);
+const AUDIT_WARN = new Set(['admin.login_failed', 'employee.login_failed', 'admin.password_failed', 'card.update', 'card.delete', 'admin.user_create', 'admin.user_delete', 'admin.user_role']);
 
 /** Who logged in from where, and every change to cards, accounts, prices and national codes. Nothing here can be edited. */
 async function renderAuditLog(card, alive) {
@@ -2377,7 +2529,7 @@ async function viewRequests(tab, alive) {
       accept.disabled = true;
       try {
         const res = await api(`/api/admin/requests/${accept.dataset.accept}/accept`, { method: 'POST' });
-        toast(`ثبت شد: ${res.personName} — ${fa(res.total)} تومان`);
+        toast(`ثبت شد: ${res.personName} — ${amtText(res.total)}`);
       } catch (err) { toast(err.message, true); }
       return route();
     }
@@ -2456,7 +2608,7 @@ async function viewRequests(tab, alive) {
       await api(`/api/admin/requests/${r.id}`, { method: 'PUT', body });
       if (accept) {
         const res = await api(`/api/admin/requests/${r.id}/accept`, { method: 'POST' });
-        toast(`ثبت شد: ${res.personName} — ${fa(res.total)} تومان`);
+        toast(`ثبت شد: ${res.personName} — ${amtText(res.total)}`);
       } else toast('درخواست ویرایش شد.');
       route();
     };
@@ -2672,6 +2824,7 @@ const routes = {
 };
 const adminOnly = new Set(['report', 'person', 'order', 'requests', 'payments', 'claims', 'items', 'people', 'settings']);
 const employeeOnly = new Set(['prices', 'pay']);
+const supervisorOnly = new Set(['items', 'people']);
 const homeHash = () => (isAdmin() ? '#/order' : isEmployee() ? '#/me' : '#/login');
 let routeSeq = 0;
 
@@ -2696,9 +2849,9 @@ const NAV = {
     { key: 'claims', label: 'بررسی فیش‌ها', short: 'فیش‌ها', icon: 'image', primary: true, badge: 'claims' },
     { key: 'payments', label: 'پرداخت و تسویه', short: 'پرداخت', icon: 'wallet', primary: true },
     { key: 'report', label: 'گزارش', icon: 'chart', hint: 'مصرف، پرداخت و مانده‌ی همه' },
-    { key: 'items', label: 'کالاها', icon: 'package', hint: 'منو، دسته‌ها و قیمت‌ها' },
-    { key: 'people', label: 'افراد', icon: 'users', hint: 'همکاران و گروه‌های پرسنلی' },
-    { key: 'settings', label: 'تنظیمات', icon: 'sliders', hint: 'کارت‌ها، اعلان و حساب‌های مسئول' },
+    { key: 'items', label: 'کالاها', icon: 'package', hint: 'منو، دسته‌ها و قیمت‌ها', supervisor: true },
+    { key: 'people', label: 'افراد', icon: 'users', hint: 'همکاران، گروه‌های پرسنلی و حد مجاز بدهی', supervisor: true },
+    { key: 'settings', label: 'تنظیمات', icon: 'sliders', hint: 'کارت‌ها، اعلان، حساب‌ها و رویدادهای امنیتی', operatorHint: 'اعلان روی گوشی و تغییر رمز' },
   ],
   employee: [
     { key: 'prices', label: 'قیمت و درخواست', short: 'منو', icon: 'coffee', primary: true },
@@ -2711,7 +2864,8 @@ const logoutButton = (cls = 'icon-btn') => `<button type="button" class="${cls}"
 
 function renderShell(active) {
   const role = isAdmin() ? 'admin' : isEmployee() ? 'employee' : '';
-  const items = NAV[role] ?? [];
+  const items = (NAV[role] ?? []).filter((i) => !i.supervisor || isSupervisor())
+    .map((i) => (i.operatorHint && !isSupervisor() ? { ...i, hint: i.operatorHint } : i));
   const nav = $('#tabs');
   document.body.dataset.role = role;
   document.body.classList.toggle('has-nav', items.length > 0);
@@ -2744,7 +2898,7 @@ function renderShell(active) {
   // «بیشتر» sheet (manager, phones): who is signed in, then the less frequent pages with a line on each.
   $('#more-body').innerHTML = role === 'admin' ? `
     <div class="sheet-user"><span class="avatar">${ic('user')}</span>
-      <div class="body"><b><bdi>${who}</bdi></b><span class="muted text-sm">مسئول بوفه</span></div>${logoutButton('btn ghost small')}</div>
+      <div class="body"><b><bdi>${who}</bdi></b><span class="muted text-sm">${staffRoleName(state.me.staffRole)}</span></div>${logoutButton('btn ghost small')}</div>
     <div class="list">${items.filter((i) => !i.primary).map((i) => `
       <a class="list-row${i.key === current ? ' active' : ''}" href="#/${i.key}"${i.key === current ? ' aria-current="page"' : ''}>
         <div class="icon">${ic(i.icon)}</div>
@@ -2791,7 +2945,9 @@ async function route() {
   const [name, arg] = location.hash.replace(/^#\/?/, '').split('/');
   const key = routes[name] ? name : homeHash().slice(2);
   if (!state.me.loggedIn && key !== 'login') { location.hash = '#/login'; return; }
-  if ((adminOnly.has(key) && !isAdmin()) || (employeeOnly.has(key) && !isEmployee())) { location.hash = homeHash(); return; }
+  if ((adminOnly.has(key) && !isAdmin()) || (employeeOnly.has(key) && !isEmployee()) || (supervisorOnly.has(key) && !isSupervisor())) {
+    location.hash = homeHash(); return;
+  }
   pollRequests();
   const seq = ++routeSeq;
   state.refresh = null;

@@ -4,6 +4,29 @@ All notable changes to OfficeBuffet are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `OfficeBuffet.csproj` (`<Version>`).
 
+## [1.6.0] - 2026-11-23
+
+### Added
+- Two staff levels. **مسئول بوفه** (pantry supervisor) can do everything; **بوفه‌دار** (pantry operator) does the
+  daily work: requests and orders (including edits, voids and undo), receipt review, payments, settling
+  individual accounts and full reports. System configuration stays with the supervisor: items, menu and prices,
+  people, staff groups and allowed debts, bank cards, accounts, the security log, the money unit, and starting or
+  ending a settlement drive. The server enforces it; the operator doesn't see those pages. The supervisor creates
+  accounts with a level and can change it (which signs that account out everywhere). Existing accounts become
+  supervisors and stay logged in.
+- Allowed debt per person: when set, it wins over the person's staff group limit, higher or lower; empty means
+  the group's limit applies.
+- Money unit: the supervisor chooses toman or rial for everyone (settings). Amounts are stored in toman, so
+  switching changes only what is shown and typed (×10); rial amounts must end in 0. Notifications, messages and
+  Excel price imports follow the unit.
+- Receipt approvals and rejections, starting and ending a settlement drive, level changes, allowed-debt changes and
+  the money unit are written to the security log, with who did them.
+
+### Changed
+- Settings, items and people are split into tabs instead of one long page: settings (general, accounts, cards,
+  security; the operator sees general and password), items (items, menu categories) and people (people, staff
+  groups). The add forms stay closed until «… جدید» or an edit button opens them.
+
 ## [1.5.0] - 2026-11-23
 
 ### Added
@@ -143,6 +166,7 @@ First public release.
 - Self-contained Windows build; Windows service scripts and IIS `web.config` included.
 - `tools/new-certificate.ps1` to create a private CA and HTTPS certificate for the office network.
 
+[1.6.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Mohamadkhadem/OfficeBuffet/releases/tag/v1.3.0

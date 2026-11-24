@@ -42,6 +42,8 @@ public static class MenuEndpoints
 
     private static void MapCategories(RouteGroupBuilder g)
     {
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
         g.MapGet("/categories", async (AppDb db) =>
         {
             var counts = await db.Items.Where(i => i.CategoryId != null).GroupBy(i => i.CategoryId)
@@ -51,7 +53,7 @@ public static class MenuEndpoints
             return list.Select(c => Dto(c, counts.GetValueOrDefault(c.Id)));
         });
 
-        g.MapPost("/categories", async (MenuCategoryRequest req, AppDb db) =>
+        sup.MapPost("/categories", async (MenuCategoryRequest req, AppDb db) =>
         {
             var category = new MenuCategory { SortOrder = (await db.MenuCategories.MaxAsync(c => (int?)c.SortOrder) ?? 0) + 1 };
             var error = await Apply(req, category, db);
@@ -61,7 +63,7 @@ public static class MenuEndpoints
             return Results.Ok(new { category.Id });
         });
 
-        g.MapPut("/categories/{id:int}", async (int id, MenuCategoryRequest req, AppDb db) =>
+        sup.MapPut("/categories/{id:int}", async (int id, MenuCategoryRequest req, AppDb db) =>
         {
             var category = await db.MenuCategories.FindAsync(id);
             if (category == null) return ApiErrors.NotFound("دسته پیدا نشد.");
@@ -71,7 +73,7 @@ public static class MenuEndpoints
             return Results.Ok();
         });
 
-        g.MapDelete("/categories/{id:int}", async (int id, AppDb db) =>
+        sup.MapDelete("/categories/{id:int}", async (int id, AppDb db) =>
         {
             var category = await db.MenuCategories.FindAsync(id);
             if (category == null) return ApiErrors.NotFound("دسته پیدا نشد.");
@@ -84,7 +86,7 @@ public static class MenuEndpoints
         });
 
         // Moves a category one place up (-1) or down (+1) in the menu.
-        g.MapPost("/categories/{id:int}/move", async (int id, MoveRequest req, AppDb db) =>
+        sup.MapPost("/categories/{id:int}/move", async (int id, MoveRequest req, AppDb db) =>
         {
             var list = await db.MenuCategories.OrderBy(c => c.SortOrder).ThenBy(c => c.Id).ToListAsync();
             var i = list.FindIndex(c => c.Id == id);
@@ -130,6 +132,8 @@ public static class MenuEndpoints
 
     private static void MapGroups(RouteGroupBuilder g)
     {
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
         g.MapGet("/groups", async (AppDb db) =>
         {
             var members = await db.People.Where(p => p.GroupId != null).GroupBy(p => p.GroupId)
@@ -144,30 +148,30 @@ public static class MenuEndpoints
             });
         });
 
-        g.MapPost("/groups", async (PersonGroupRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPost("/groups", async (PersonGroupRequest req, HttpContext ctx, AppDb db) =>
         {
             var group = new PersonGroup();
             var error = await ApplyGroup(req, group, db);
             if (error != null) return ApiErrors.Bad(error);
-            if (group.DebtLimit > 0) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {group.DebtLimit:N0}");
+            if (group.DebtLimit > 0) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {Currency.Format(group.DebtLimit, false)}");
             db.PersonGroups.Add(group);
             await db.SaveChangesAsync();
             return Results.Ok(new { group.Id });
         });
 
-        g.MapPut("/groups/{id:int}", async (int id, PersonGroupRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPut("/groups/{id:int}", async (int id, PersonGroupRequest req, HttpContext ctx, AppDb db) =>
         {
             var group = await db.PersonGroups.FindAsync(id);
             if (group == null) return ApiErrors.NotFound("گروه پیدا نشد.");
             var oldLimit = group.DebtLimit;
             var error = await ApplyGroup(req, group, db);
             if (error != null) return ApiErrors.Bad(error);
-            if (group.DebtLimit != oldLimit) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {oldLimit:N0} ← {group.DebtLimit:N0}");
+            if (group.DebtLimit != oldLimit) Audit.Add(db, ctx, "group.debt-limit", $"«{group.Name}»: {Currency.Format(oldLimit, false)} ← {Currency.Format(group.DebtLimit, false)}");
             await db.SaveChangesAsync();
             return Results.Ok();
         });
 
-        g.MapDelete("/groups/{id:int}", async (int id, AppDb db) =>
+        sup.MapDelete("/groups/{id:int}", async (int id, AppDb db) =>
         {
             var group = await db.PersonGroups.FindAsync(id);
             if (group == null) return ApiErrors.NotFound("گروه پیدا نشد.");

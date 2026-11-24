@@ -28,18 +28,35 @@ public static class AdminEndpoints
         MapUsers(g);
         MapCards(g);
 
+        // The money unit everyone sees (supervisor only). Stored amounts are toman either way.
+        g.MapPut("/settings/currency", async (CurrencyRequest req, HttpContext ctx, AppDb db) =>
+        {
+            if (req.Currency is not (Currency.Toman or Currency.Rial)) return ApiErrors.Bad("واحد پول نامعتبر است.");
+            var setting = await db.Settings.FindAsync(Currency.SettingKey);
+            var old = setting?.Value == Currency.Rial ? Currency.Rial : Currency.Toman;
+            if (old == req.Currency) return Results.Ok();
+            if (setting == null) db.Settings.Add(new AppSetting { Key = Currency.SettingKey, Value = req.Currency });
+            else setting.Value = req.Currency;
+            Audit.Add(db, ctx, "settings.currency", $"{Currency.UnitName(old == Currency.Rial)} ← {Currency.UnitName(req.Currency == Currency.Rial)}");
+            await db.SaveChangesAsync();
+            return Results.Ok();
+        }).RequireAuthorization(Roles.Supervisor);
+
         // The security log (read-only; nothing can change or delete it). Newest first; "before" pages back.
         g.MapGet("/audit", async (long? before, AppDb db) =>
             await db.AuditLog.Where(a => before == null || a.Id < before).OrderByDescending(a => a.Id).Take(AuditPageSize)
-                .Select(a => new { a.Id, a.At, a.Actor, a.Action, a.Details, a.Ip }).ToListAsync());
+                .Select(a => new { a.Id, a.At, a.Actor, a.Action, a.Details, a.Ip }).ToListAsync())
+            .RequireAuthorization(Roles.Supervisor);
     }
 
     private static void MapCards(RouteGroupBuilder g)
     {
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
         g.MapGet("/cards", async (AppDb db) => await db.PaymentCards.OrderBy(c => c.Id).ToListAsync());
 
         // Card changes decide where everyone's money goes, so each one is in the security log.
-        g.MapPost("/cards", async (PaymentCardRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPost("/cards", async (PaymentCardRequest req, HttpContext ctx, AppDb db) =>
         {
             var (card, error) = await ValidateCard(req, null, db);
             if (error != null) return error == CheckDigitFailed ? CheckDigitResult() : ApiErrors.Bad(error);
@@ -49,7 +66,7 @@ public static class AdminEndpoints
             return Results.Ok(card);
         });
 
-        g.MapPut("/cards/{id:int}", async (int id, PaymentCardRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPut("/cards/{id:int}", async (int id, PaymentCardRequest req, HttpContext ctx, AppDb db) =>
         {
             var card = await db.PaymentCards.FindAsync(id);
             if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
@@ -63,7 +80,7 @@ public static class AdminEndpoints
             return Results.Ok(card);
         });
 
-        g.MapDelete("/cards/{id:int}", async (int id, HttpContext ctx, AppDb db) =>
+        sup.MapDelete("/cards/{id:int}", async (int id, HttpContext ctx, AppDb db) =>
         {
             var card = await db.PaymentCards.FindAsync(id);
             if (card == null) return ApiErrors.NotFound("کارت پیدا نشد.");
@@ -107,13 +124,15 @@ public static class AdminEndpoints
 
     private static void MapItems(RouteGroupBuilder g)
     {
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
         // Items in menu order (category order, then name); uncategorized ("سایر") last.
         g.MapGet("/items", async (AppDb db) =>
             await db.Items.OrderBy(i => i.Category == null).ThenBy(i => i.Category!.SortOrder).ThenBy(i => i.Name)
                 .Select(i => new { i.Id, i.Name, i.CategoryId, category = i.Category!.Name, i.Price, i.IsActive })
                 .ToListAsync());
 
-        g.MapPost("/items", async (ItemRequest req, AppDb db) =>
+        sup.MapPost("/items", async (ItemRequest req, AppDb db) =>
         {
             var error = await ValidateItem(req, null, db);
             if (error != null) return ApiErrors.Bad(error);
@@ -123,13 +142,13 @@ public static class AdminEndpoints
             return Results.Ok(new { item.Id });
         });
 
-        g.MapPut("/items/{id:int}", async (int id, ItemRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPut("/items/{id:int}", async (int id, ItemRequest req, HttpContext ctx, AppDb db) =>
         {
             var item = await db.Items.FindAsync(id);
             if (item == null) return ApiErrors.NotFound("کالا پیدا نشد.");
             var error = await ValidateItem(req, id, db);
             if (error != null) return ApiErrors.Bad(error);
-            if (item.Price != req.Price) Audit.Add(db, ctx, "item.price", $"«{item.Name}»: {item.Price:N0} ← {req.Price:N0}");
+            if (item.Price != req.Price) Audit.Add(db, ctx, "item.price", $"«{item.Name}»: {Currency.Format(item.Price, false)} ← {Currency.Format(req.Price, false)}");
             item.Name = req.Name.Trim();
             item.CategoryId = req.CategoryId;
             item.Price = req.Price;
@@ -138,7 +157,7 @@ public static class AdminEndpoints
             return Results.Ok(new { item.Id });
         });
 
-        g.MapDelete("/items/{id:int}", async (int id, AppDb db) =>
+        sup.MapDelete("/items/{id:int}", async (int id, AppDb db) =>
         {
             var item = await db.Items.FindAsync(id);
             if (item == null) return ApiErrors.NotFound("کالا پیدا نشد.");
@@ -165,19 +184,22 @@ public static class AdminEndpoints
 
     private static void MapPeople(RouteGroupBuilder g)
     {
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
         g.MapGet("/people", async (AppDb db) => await db.People.OrderBy(p => p.Name).ToListAsync());
 
-        g.MapPost("/people", async (PersonRequest req, AppDb db) =>
+        sup.MapPost("/people", async (PersonRequest req, HttpContext ctx, AppDb db) =>
         {
             var error = await ValidatePerson(req, null, db);
             if (error != null) return ApiErrors.Bad(error);
-            var person = new Person { Name = req.Name.Trim(), NationalCode = NormalizedCode(req), IsActive = req.IsActive, GroupId = req.GroupId };
+            var person = new Person { Name = req.Name.Trim(), NationalCode = NormalizedCode(req), IsActive = req.IsActive, GroupId = req.GroupId, DebtLimit = req.DebtLimit };
+            if (req.DebtLimit != null) Audit.Add(db, ctx, "person.debt-limit", $"«{person.Name}»: {LimitText(req.DebtLimit)}");
             db.People.Add(person);
             await db.SaveChangesAsync();
             return Results.Ok(person);
         });
 
-        g.MapPut("/people/{id:int}", async (int id, PersonRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPut("/people/{id:int}", async (int id, PersonRequest req, HttpContext ctx, AppDb db) =>
         {
             var person = await db.People.FindAsync(id);
             if (person == null) return ApiErrors.NotFound("شخص پیدا نشد.");
@@ -189,15 +211,18 @@ public static class AdminEndpoints
                 Audit.Add(db, ctx, "person.code", $"«{person.Name}»: {CodeOrDash(person.NationalCode)} ← {CodeOrDash(code)}");
             if (req.IsActive != person.IsActive)
                 Audit.Add(db, ctx, req.IsActive ? "person.activate" : "person.deactivate", $"«{person.Name}»");
+            if (req.DebtLimit != person.DebtLimit)
+                Audit.Add(db, ctx, "person.debt-limit", $"«{person.Name}»: {LimitText(person.DebtLimit)} ← {LimitText(req.DebtLimit)}");
             person.Name = req.Name.Trim();
             person.NationalCode = NormalizedCode(req);
             person.IsActive = req.IsActive;
             person.GroupId = req.GroupId;
+            person.DebtLimit = req.DebtLimit;
             await db.SaveChangesAsync();
             return Results.Ok(person);
         });
 
-        g.MapDelete("/people/{id:int}", async (int id, AppDb db) =>
+        sup.MapDelete("/people/{id:int}", async (int id, AppDb db) =>
         {
             var person = await db.People.FindAsync(id);
             if (person == null) return ApiErrors.NotFound("شخص پیدا نشد.");
@@ -219,6 +244,7 @@ public static class AdminEndpoints
         if (await db.People.AnyAsync(p => p.Name == name && p.Id != id)) return "شخصی با این نام وجود دارد.";
         if (req.GroupId is { } groupId && !await db.PersonGroups.AnyAsync(x => x.Id == groupId))
             return "گروه انتخاب‌شده وجود ندارد.";
+        if (req.DebtLimit is < 0 or > 1_000_000_000) return "حد مجاز بدهی نامعتبر است.";
         var code = NormalizedCode(req);
         if (code != null)
         {
@@ -228,6 +254,8 @@ public static class AdminEndpoints
         }
         return null;
     }
+
+    private static string LimitText(long? limit) => limit == null ? "حد گروه" : Currency.Format(limit.Value, false);
 
     private static string CodeOrDash(string? code) => string.IsNullOrEmpty(code) ? "—" : Audit.MaskCode(code);
 
@@ -409,33 +437,62 @@ public static class AdminEndpoints
 
     private static void MapUsers(RouteGroupBuilder g)
     {
-        g.MapGet("/users", async (AppDb db) =>
-            await db.AdminUsers.OrderBy(u => u.Id).Select(u => new { u.Id, u.Username, u.CreatedAt }).ToListAsync());
+        // Configuration: pantry supervisor only.
+        var sup = g.MapGroup("").RequireAuthorization(Roles.Supervisor);
+        sup.MapGet("/users", async (AppDb db) =>
+            (await db.AdminUsers.OrderBy(u => u.Role).ThenBy(u => u.Id).ToListAsync())
+                .Select(u => new { u.Id, u.Username, u.CreatedAt, role = RoleKey(u.Role) }));
 
-        g.MapPost("/users", async (UserRequest req, HttpContext ctx, AppDb db) =>
+        sup.MapPost("/users", async (UserRequest req, HttpContext ctx, AppDb db) =>
         {
             var error = AuthEndpoints.ValidateCredentials(req.Username, req.Password);
             if (error != null) return ApiErrors.Bad(error);
+            if (ParseRole(req.Role) is not { } role) return ApiErrors.Bad("سطح دسترسی نامعتبر است.");
             var username = req.Username.Trim();
             if (await db.AdminUsers.AnyAsync(u => u.Username == username)) return ApiErrors.Bad("این نام کاربری وجود دارد.");
-            var user = new AdminUser { Username = username, PasswordHash = Passwords.Hash(req.Password), SecurityStamp = Passwords.NewStamp() };
+            var user = new AdminUser { Username = username, PasswordHash = Passwords.Hash(req.Password), SecurityStamp = Passwords.NewStamp(), Role = role };
             db.AdminUsers.Add(user);
-            Audit.Add(db, ctx, "admin.user_create", $"حساب مسئول جدید: {username}");
+            Audit.Add(db, ctx, "admin.user_create", $"حساب جدید ({Roles.Name(role)}): {username}");
             await db.SaveChangesAsync();
-            return Results.Ok(new { user.Id, user.Username, user.CreatedAt });
+            return Results.Ok(new { user.Id, user.Username, user.CreatedAt, role = RoleKey(user.Role) });
         });
 
-        g.MapDelete("/users/{id:int}", async (int id, HttpContext ctx, AppDb db) =>
+        // Changing someone's level signs them out everywhere, so their next login carries the new level.
+        sup.MapPut("/users/{id:int}/role", async (int id, UserRoleRequest req, HttpContext ctx, AppDb db) =>
+        {
+            if (ParseRole(req.Role) is not { } role) return ApiErrors.Bad("سطح دسترسی نامعتبر است.");
+            var user = await db.AdminUsers.FindAsync(id);
+            if (user == null) return ApiErrors.NotFound("کاربر پیدا نشد.");
+            if (user.Username == ctx.User.Identity!.Name) return ApiErrors.Bad("نمی‌توانید سطح دسترسی خودتان را عوض کنید.");
+            if (user.Role == role) return Results.Ok();
+            var old = user.Role;
+            user.Role = role;
+            user.SecurityStamp = Passwords.NewStamp();
+            Audit.Add(db, ctx, "admin.user_role", $"{user.Username}: {Roles.Name(old)} ← {Roles.Name(role)}");
+            await db.SaveChangesAsync();
+            return Results.Ok();
+        });
+
+        sup.MapDelete("/users/{id:int}", async (int id, HttpContext ctx, AppDb db) =>
         {
             var user = await db.AdminUsers.FindAsync(id);
             if (user == null) return ApiErrors.NotFound("کاربر پیدا نشد.");
             if (user.Username == ctx.User.Identity!.Name) return ApiErrors.Bad("نمی‌توانید حساب خودتان را حذف کنید.");
-            Audit.Add(db, ctx, "admin.user_delete", $"حساب مسئول حذف شد: {user.Username}");
+            Audit.Add(db, ctx, "admin.user_delete", $"حساب حذف شد ({Roles.Name(user.Role)}): {user.Username}");
             db.AdminUsers.Remove(user);
             await db.SaveChangesAsync();
             return Results.Ok();
         });
     }
+
+    private static string RoleKey(StaffRole role) => role == StaffRole.Supervisor ? "supervisor" : "operator";
+
+    private static StaffRole? ParseRole(string? role) => role switch
+    {
+        null or "" or "supervisor" => StaffRole.Supervisor,
+        "operator" => StaffRole.Operator,
+        _ => null,
+    };
 
     private static string? Clip(string? text)
     {

@@ -25,7 +25,7 @@ public static class ImportEndpoints
 
     public static void MapImport(this IEndpointRouteBuilder app)
     {
-        var g = app.MapGroup("/api/admin/import").RequireAuthorization(Roles.Admin);
+        var g = app.MapGroup("/api/admin/import").RequireAuthorization(Roles.Supervisor); // configuration: supervisor only
 
         // The raw file is the request body (no multipart form), with its name in the query for the type.
         g.MapPost("/parse", async (string name, HttpRequest request) =>
@@ -54,6 +54,7 @@ public static class ImportEndpoints
             var nextSort = (await db.MenuCategories.MaxAsync(c => (int?)c.SortOrder) ?? 0) + 1;
             var seen = new Dictionary<string, int>();
             var results = new List<RowResult>();
+            var rial = await Currency.IsRial(db);
             foreach (var r in req.Rows ?? [])
             {
                 var name = Norm(r.Name);
@@ -67,10 +68,14 @@ public static class ImportEndpoints
                 if (name.Length > MaxNameLength) { results.Add(new(r.Row, name, priceText, Status.Error, $"عنوان بیشتر از {MaxNameLength} حرف است.")); continue; }
                 if (seen.TryGetValue(name, out var first)) { results.Add(new(r.Row, name, priceText, Status.Error, $"تکراری در فایل (همان ردیف {first})؛ ثبت نمی‌شود.")); continue; }
                 seen[name] = r.Row;
-                if (!TryParsePrice(priceText, out var price)) { results.Add(new(r.Row, name, priceText, Status.Error, $"مبلغ «{priceText}» عدد نیست.")); continue; }
+                if (!TryParsePrice(priceText, rial, out var price))
+                {
+                    results.Add(new(r.Row, name, priceText, Status.Error, rial ? $"مبلغ «{priceText}» عدد ریالیِ مضرب ۱۰ نیست." : $"مبلغ «{priceText}» عدد نیست."));
+                    continue;
+                }
                 var categoryName = Norm(r.Category);
                 if (categoryName.Length > 40) { results.Add(new(r.Row, name, priceText, Status.Error, "نام دسته بیشتر از ۴۰ حرف است.")); continue; }
-                var shown = price == 0 ? "رایگان" : price.ToString("N0", CultureInfo.InvariantCulture);
+                var shown = Money(price, rial);
                 // An unknown category name becomes a new category (always open, for everyone).
                 var category = categoryName.Length == 0 ? null
                     : categories.Find(categoryName) ?? categories.Add(new MenuCategory { Name = categoryName, SortOrder = nextSort++ }, db.MenuCategories, req.Apply);
@@ -79,7 +84,7 @@ public static class ImportEndpoints
                 if (byName.TryGetValue(name, out var item))
                 {
                     var changes = new List<string>();
-                    if (item.Price != price) changes.Add($"مبلغ {Money(item.Price)} ← {Money(price)}");
+                    if (item.Price != price) changes.Add($"مبلغ {Money(item.Price, rial)} ← {Money(price, rial)}");
                     if (category != null && item.Category != category) changes.Add(newCategory ?? $"دسته «{categoryName}»");
                     if (changes.Count == 0) { results.Add(new(r.Row, name, shown, Status.Same, "بدون تغییر")); continue; }
                     results.Add(new(r.Row, name, shown, Status.Update, string.Join("، ", changes), true));
@@ -208,25 +213,28 @@ public static class ImportEndpoints
         .Replace('ي', 'ی').Replace('ى', 'ی').Replace('ك', 'ک').Replace(' ', ' ')
         .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
-    /// <summary>"۲۰٬۰۰۰ تومان", "20,000" or "20000.0" → 20000. Empty means 0, i.e. free.</summary>
-    private static bool TryParsePrice(string text, out long price)
+    /// <summary>
+    /// "۲۰٬۰۰۰ تومان", "20,000" or "20000.0" → 20000 toman. With rial as the unit the number is in rial and must be a
+    /// multiple of 10 (200,000 ریال → 20000 toman). Empty means 0, i.e. free.
+    /// </summary>
+    private static bool TryParsePrice(string text, bool rial, out long price)
     {
         var t = string.IsNullOrWhiteSpace(text) ? "0" : text;
-        var digits = new string(t.Replace("تومان", "").Select(c => c switch
+        var digits = new string(t.Replace("تومان", "").Replace("ریال", "").Select(c => c switch
         {
             >= '۰' and <= '۹' => (char)('0' + (c - '۰')),
             >= '٠' and <= '٩' => (char)('0' + (c - '٠')),
             _ => c,
         }).Where(c => c is not (',' or '٬' or '،' or ' ' or ' ')).ToArray());
         if (decimal.TryParse(digits, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var d)
-            && d >= 0 && d == decimal.Truncate(d) && d <= AdminEndpoints.MaxAmount)
+            && d >= 0 && d == decimal.Truncate(d) && (!rial || d % 10 == 0) && (rial ? d / 10 : d) <= AdminEndpoints.MaxAmount)
         {
-            price = (long)d;
+            price = (long)(rial ? d / 10 : d);
             return true;
         }
         price = 0;
         return false;
     }
 
-    private static string Money(long n) => n == 0 ? "رایگان" : n.ToString("N0", CultureInfo.InvariantCulture);
+    private static string Money(long toman, bool rial) => toman == 0 ? "رایگان" : Currency.Number(toman, rial);
 }

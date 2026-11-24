@@ -1,9 +1,27 @@
 namespace OfficeBuffet.Data;
 
+/// <summary>Staff account levels. The pantry supervisor can do everything the pantry operator can, and more.</summary>
+public enum StaffRole
+{
+    /// <summary>مسئول بوفه: everything, including system configuration, accounts and settlement drives.</summary>
+    Supervisor = 0,
+    /// <summary>بوفه‌دار: day-to-day work — requests, orders, receipts, payments, settling accounts, reports.</summary>
+    Operator = 1,
+}
+
+/// <summary>A system-wide setting set by the pantry supervisor (e.g. "currency" → "rial").</summary>
+public class AppSetting
+{
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
 public class AdminUser
 {
     public int Id { get; set; }
     public string Username { get; set; } = "";
+    /// <summary>Accounts from before roles existed are supervisors (the default 0).</summary>
+    public StaffRole Role { get; set; } = StaffRole.Supervisor;
     public string PasswordHash { get; set; } = "";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     /// <summary>
@@ -23,6 +41,11 @@ public class Person
     /// <summary>Optional staff group; menu categories can be limited to one group.</summary>
     public int? GroupId { get; set; }
     public PersonGroup? Group { get; set; }
+    /// <summary>
+    /// This person's own allowed debt during a settlement drive (toman). When set it wins over the group's
+    /// <see cref="PersonGroup.DebtLimit"/>, higher or lower; null = the group's limit applies.
+    /// </summary>
+    public long? DebtLimit { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

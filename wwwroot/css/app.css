@@ -304,6 +304,9 @@ main { max-width: 860px; margin: 0 auto; padding: var(--s-4); }
 }
 .segmented a.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
 .segmented .n { font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
+/* a "new / edit" form inside a list card, opened by its "+ … جدید" button */
+.sub-form { padding-block-start: var(--s-4); border-block-start: 1px solid var(--border); }
+.sub-form h3 { font-size: var(--fs-md); }
 
 /* ---------- stats ---------- */
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-3); margin-block-end: var(--s-4); }

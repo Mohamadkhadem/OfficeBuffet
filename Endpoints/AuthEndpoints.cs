@@ -10,8 +10,13 @@ namespace OfficeBuffet.Endpoints;
 
 public static class Roles
 {
+    /// <summary>Any staff account (pantry supervisor or operator).</summary>
     public const string Admin = "admin";
+    /// <summary>Pantry supervisor only (مسئول بوفه); always comes together with <see cref="Admin"/>.</summary>
+    public const string Supervisor = "supervisor";
     public const string Employee = "employee";
+
+    public static string Name(StaffRole role) => role == StaffRole.Supervisor ? "مسئول بوفه" : "بوفه‌دار";
 }
 
 public static class AuthEndpoints
@@ -19,6 +24,8 @@ public static class AuthEndpoints
     public const int MinPasswordLength = 8;
     private const string NationalCodeClaim = "national_code";
     private const string StampClaim = "stamp";
+    /// <summary>Present on every staff login since roles exist ("supervisor" / "operator").</summary>
+    private const string LevelClaim = "level";
 
     // Failed-login limits (in addition to the "login" rate limit of 20 requests / 5 min per IP).
     private const int AdminFailuresPerUser = 5, AdminFailuresPerIp = 20, EmployeeFailuresPerIp = 10;
@@ -50,9 +57,13 @@ public static class AuthEndpoints
                 loggedIn = role != null,
                 role,
                 username = role == Roles.Admin ? ctx.User.Identity!.Name : null,
+                // "supervisor" (مسئول بوفه) or "operator" (بوفه‌دار) for staff accounts.
+                staffRole = role != Roles.Admin ? null : ctx.User.IsInRole(Roles.Supervisor) ? "supervisor" : "operator",
                 personId = role == Roles.Employee ? EmployeePersonId(ctx.User) : null,
                 personName = role == Roles.Employee ? ctx.User.Identity!.Name : null,
                 needsSetup = !await db.AdminUsers.AnyAsync(),
+                // Unit amounts are shown and typed in ("toman" / "rial"); the API always speaks toman.
+                currency = await Currency.Get(db),
                 version = AppVersion,
             };
         });
@@ -166,7 +177,8 @@ public static class AuthEndpoints
         var role = user?.FindFirstValue(ClaimTypes.Role);
         var valid = role switch
         {
-            Roles.Admin => await IsAdmin(db, id, user!.Identity?.Name, user.FindFirstValue(StampClaim) ?? ""),
+            Roles.Admin when user!.FindFirst(LevelClaim) == null => await UpgradeLegacyAdmin(ctx, db, id),
+            Roles.Admin => await IsAdmin(db, id, user.Identity?.Name, user.FindFirstValue(StampClaim) ?? "", user.IsInRole(Roles.Supervisor)),
             Roles.Employee => await IsEmployee(db, id, user!.FindFirstValue(NationalCodeClaim)),
             _ => false,
         };
@@ -181,8 +193,26 @@ public static class AuthEndpoints
     }
 
     // Logins from before the stamp existed carry none, which matches the empty stamp of accounts not changed since.
-    private static Task<bool> IsAdmin(AppDb db, int id, string? username, string stamp) =>
-        db.AdminUsers.AnyAsync(u => u.Id == id && u.Username == username && u.SecurityStamp == stamp);
+    // The login's level must still be the account's: a role change also changes the stamp, this is a second guard.
+    // Logins from before roles existed carry no supervisor claim; they are refused once and log in again.
+    private static Task<bool> IsAdmin(AppDb db, int id, string? username, string stamp, bool supervisor) =>
+        db.AdminUsers.AnyAsync(u => u.Id == id && u.Username == username && u.SecurityStamp == stamp
+            && (u.Role == StaffRole.Supervisor) == supervisor);
+
+    /// <summary>
+    /// A staff login from before roles existed (every such account was then a supervisor): if the account is
+    /// unchanged, the login gets the account's current claims instead of being signed out.
+    /// </summary>
+    private static async Task<bool> UpgradeLegacyAdmin(CookieValidatePrincipalContext ctx, AppDb db, int id)
+    {
+        var user = ctx.Principal!;
+        var stamp = user.FindFirstValue(StampClaim) ?? "";
+        var account = await db.AdminUsers.FirstOrDefaultAsync(u => u.Id == id && u.Username == user.Identity!.Name && u.SecurityStamp == stamp);
+        if (account == null) return false;
+        ctx.ReplacePrincipal(new ClaimsPrincipal(new ClaimsIdentity(AdminClaims(account), CookieAuthenticationDefaults.AuthenticationScheme)));
+        ctx.ShouldRenew = true;
+        return true;
+    }
 
     private static Task<bool> IsEmployee(AppDb db, int id, string? code) =>
         db.People.AnyAsync(p => p.Id == id && p.IsActive && p.NationalCode == code);
@@ -214,13 +244,18 @@ public static class AuthEndpoints
 
     private static string FaDigits(string s) => string.Concat(s.Select(c => c is >= '0' and <= '9' ? (char)('۰' + (c - '0')) : c));
 
+    private static Claim[] AdminClaims(AdminUser user) => [
+        new Claim(ClaimTypes.Name, user.Username),
+        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        // Admin first: code that reads "the" role (FindFirstValue) sees every staff account as admin.
+        new Claim(ClaimTypes.Role, Roles.Admin),
+        .. user.Role == StaffRole.Supervisor ? [new Claim(ClaimTypes.Role, Roles.Supervisor)] : Array.Empty<Claim>(),
+        new Claim(LevelClaim, user.Role == StaffRole.Supervisor ? "supervisor" : "operator"),
+        new Claim(StampClaim, user.SecurityStamp),
+    ];
+
     private static Task SignInAdmin(HttpContext ctx, AdminUser user) =>
-        SignIn(ctx, [
-            new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(ClaimTypes.Role, Roles.Admin),
-            new Claim(StampClaim, user.SecurityStamp),
-        ], new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.Add(PersistentSession) });
+        SignIn(ctx, AdminClaims(user), new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.Add(PersistentSession) });
 
     private static Task SignInEmployee(HttpContext ctx, Person person) =>
         SignIn(ctx, [

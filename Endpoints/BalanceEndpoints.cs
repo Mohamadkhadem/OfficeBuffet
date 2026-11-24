@@ -51,9 +51,11 @@ public static class BalanceEndpoints
 
             var drive = new SettlementDrive { StartedBy = ctx.User.Identity!.Name!, Until = until.UtcDateTime, UntilLabel = req.UntilLabel };
             db.SettlementDrives.Add(drive);
+            Audit.Add(db, ctx, "drive.start", $"تسویه‌ی خریدهای تا {drive.UntilLabel}");
             await db.SaveChangesAsync();
             var debtors = await Balances.DueForDrive(db, drive);
             var limits = await Balances.DebtLimits(db);
+            var rial = await Currency.IsRial(db);
             foreach (var (personId, due) in debtors)
             {
                 var limit = limits.GetValueOrDefault(personId);
@@ -61,9 +63,9 @@ public static class BalanceEndpoints
                 {
                     title = "💳 درخواست تسویه حساب",
                     body = $"مسئول بوفه درخواست تسویه‌ی خریدهای تا {FaDigits(drive.UntilLabel!)} را ارسال کرده است. " +
-                           $"بدهی شما {Toman(due)} تومان است؛ " + (due > limit
+                           $"بدهی شما {Amount(due, rial)} است؛ " + (due > limit
                                ? limit > 0
-                                   ? $"با احترام، تا دست‌کم {Toman(due - limit)} تومان آن را پرداخت نکنید سفارش جدید پذیرفته نمی‌شود."
+                                   ? $"با احترام، تا دست‌کم {Amount(due - limit, rial)} آن را پرداخت نکنید سفارش جدید پذیرفته نمی‌شود."
                                    : "با احترام، تا پرداخت آن سفارش جدید پذیرفته نمی‌شود."
                                : "لطفاً آن را پرداخت کنید."),
                     tag = "settlement-drive",
@@ -71,7 +73,7 @@ public static class BalanceEndpoints
                 });
             }
             return Results.Ok(new { drive = DriveDto(drive), notified = debtors.Count });
-        });
+        }).RequireAuthorization(Roles.Supervisor);
 
         // Ends the drive quietly: ordering simply becomes free again, nobody is notified.
         g.MapPost("/end", async (HttpContext ctx, AppDb db) =>
@@ -80,9 +82,10 @@ public static class BalanceEndpoints
             if (drive == null) return ApiErrors.Conflict("تسویه‌ای در جریان نیست.");
             drive.EndedAt = DateTime.UtcNow;
             drive.EndedBy = ctx.User.Identity!.Name;
+            Audit.Add(db, ctx, "drive.end", drive.UntilLabel == null ? "پایان تسویه" : $"پایان تسویه‌ی خریدهای تا {drive.UntilLabel}");
             await db.SaveChangesAsync();
             return Results.Ok(new { drive = DriveDto(null), notified = 0 });
-        });
+        }).RequireAuthorization(Roles.Supervisor);
 
         // Who still owes for the drive's period, for the manager while a drive is running.
         g.MapGet("/debtors", async (AppDb db) =>
@@ -104,14 +107,14 @@ public static class BalanceEndpoints
     private static object DriveDto(SettlementDrive? d) =>
         new { active = d != null, startedAt = d?.StartedAt, startedBy = d?.StartedBy, until = d == null ? (DateTime?)null : d.Until ?? d.StartedAt, untilLabel = d?.UntilLabel };
 
-    private static string Toman(long n) => FaDigits(n.ToString("N0", CultureInfo.InvariantCulture));
+    private static string Amount(long toman, bool rial) => FaDigits(Currency.Format(toman, rial));
 
     private static string FaDigits(string s) => string.Concat(s.Select(c => c is >= '0' and <= '9' ? (char)('۰' + c - '0') : c == ',' ? '٬' : c));
 
     /// <summary>Refusal message for a request while a drive is on and the person still owes money.</summary>
-    public static string BlockedMessage(long due, long limit, SettlementDrive drive) =>
+    public static string BlockedMessage(long due, long limit, SettlementDrive drive, bool rial) =>
         $"حالت تسویه فعال است و بابت خریدهای {(drive.UntilLabel != null ? $"تا {FaDigits(drive.UntilLabel)}" : "قبل از شروع تسویه")}، " +
-        $"{Toman(due)} تومان بدهکارید" + (limit > 0
-            ? $" (حد مجاز گروه شما {Toman(limit)} تومان)؛ تا دست‌کم {Toman(due - limit)} تومان پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود."
+        $"{Amount(due, rial)} بدهکارید" + (limit > 0
+            ? $" (حد مجاز بدهی شما {Amount(limit, rial)})؛ تا دست‌کم {Amount(due - limit, rial)} پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود."
             : "؛ تا آن را پرداخت نکنید، درخواست جدید پذیرفته نمی‌شود.");
 }

@@ -63,7 +63,7 @@ public static class RequestEndpoints
             if (await Balances.ActiveDrive(db) is { } drive
                 && (await Balances.DueForDrive(db, drive, personId)).GetValueOrDefault(personId) is var due and > 0
                 && (await Balances.DebtLimits(db, personId)).GetValueOrDefault(personId) is var limit && due > limit)
-                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(due, limit, drive));
+                return ApiErrors.Bad(BalanceEndpoints.BlockedMessage(due, limit, drive, await Currency.IsRial(db)));
 
             var itemIds = lines.Select(l => l.ItemId).ToList();
             var items = await db.Items.Include(i => i.Category).Where(i => itemIds.Contains(i.Id) && i.IsActive).ToDictionaryAsync(i => i.Id);

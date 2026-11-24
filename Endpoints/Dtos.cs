@@ -3,9 +3,11 @@ namespace OfficeBuffet.Endpoints;
 public record LoginRequest(string Username, string Password);
 public record EmployeeLoginRequest(string NationalCode);
 public record ChangePasswordRequest(string Current, string New);
-public record UserRequest(string Username, string Password);
+public record UserRequest(string Username, string Password, string? Role = null);
+public record UserRoleRequest(string? Role);
+public record CurrencyRequest(string? Currency);
 public record ItemRequest(string Name, int? CategoryId, long Price, bool IsActive = true);
-public record PersonRequest(string Name, string? NationalCode, bool IsActive = true, int? GroupId = null);
+public record PersonRequest(string Name, string? NationalCode, bool IsActive = true, int? GroupId = null, long? DebtLimit = null);
 /// <param name="StartTime">"07:00"; leave both times empty for a category that is always open.</param>
 public record MenuCategoryRequest(string? Name, string? StartTime, string? EndTime, int? PersonGroupId, int? PaymentCardId = null);
 public record PersonGroupRequest(string? Name, long DebtLimit = 0);

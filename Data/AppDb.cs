@@ -19,6 +19,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<SettlementDrive> SettlementDrives => Set<SettlementDrive>();
     public DbSet<PaymentClaim> PaymentClaims => Set<PaymentClaim>();
     public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
+    public DbSet<AppSetting> Settings => Set<AppSetting>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -35,6 +36,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         b.Entity<Person>().Property(x => x.NationalCode).HasMaxLength(10);
         b.Entity<Item>().HasIndex(x => x.Name).IsUnique();
         b.Entity<PaymentCard>().HasIndex(x => x.Number).IsUnique();
+        b.Entity<AppSetting>().HasKey(x => x.Key);
         b.Entity<PersonGroup>().HasIndex(x => x.Name).IsUnique();
         b.Entity<MenuCategory>().HasIndex(x => x.Name).IsUnique();
         // Deleting a group or category that is still in use is refused by the API, so Restrict is only a safety net.

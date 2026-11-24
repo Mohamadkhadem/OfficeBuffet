@@ -105,7 +105,15 @@ which is checked against its check digit. It runs entirely on your own server in
   debt blocks.
 - **Bank cards:** define the cards colleagues pay into, each with a title (for example "Breakfast card"). They
   appear under each colleague's balance, and tapping a number copies it.
-- Multiple manager accounts, password change, and light and dark themes.
+- **Allowed debt per person:** a person can have their own allowed debt, which wins over their group's (higher or
+  lower). Empty means the group's limit applies.
+- **Two staff levels:** **مسئول بوفه** (supervisor) can do everything. **بوفه‌دار** (operator) does the daily work:
+  requests and orders (with edits, voids and undo), receipt review, payments, settling accounts and full reports.
+  Configuration stays with the supervisor: items, menu and prices, people, groups and allowed debts, bank cards,
+  accounts, the security log, the money unit, and starting or ending a settlement drive. The server enforces it.
+- **Toman or rial:** the supervisor picks the unit everyone sees and types amounts in. Amounts are stored in
+  toman, so switching never changes a balance; rial amounts must end in 0.
+- Multiple accounts (supervisor or operator), password change, and light and dark themes.
 
 ### Built to be trusted
 
@@ -257,7 +265,8 @@ OfficeBuffet is designed for a **trusted office network**, not the open internet
 - Receipts: only well-formed JPEG/PNG/WebP up to 3 MB, stored under random names outside `wwwroot`, served with
   `Content-Security-Policy: sandbox`. The same photo is never accepted twice; same-amount receipts of one person
   within a week are flagged for the manager. Approving is atomic: a double click records one payment.
-- The security log (sign-ins, bank cards, manager accounts, prices, national IDs) is append-only: database
+- The security log (sign-ins, bank cards, accounts and their levels, prices, national IDs, allowed debts, the money
+  unit, receipt approvals and rejections, settlement drives — each with who did it) is append-only: database
   triggers refuse UPDATE and DELETE.
 - Push notifications are only sent to real browser push services (Google, Mozilla, Apple, Microsoft).
 - Uploaded spreadsheets are parsed defensively: size limits, no DTD processing, and zip-bomb checks.

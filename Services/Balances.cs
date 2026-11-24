@@ -100,12 +100,13 @@ public static class Balances
     }
 
     /// <summary>
-    /// Allowed debt during a drive per person (their staff group's <see cref="PersonGroup.DebtLimit"/>; 0 without a
-    /// group). A person is blocked from ordering only while their drive debt is above it.
+    /// Allowed debt during a drive per person: their own <see cref="Person.DebtLimit"/> if set, otherwise their staff
+    /// group's <see cref="PersonGroup.DebtLimit"/>, otherwise 0. A person is blocked from ordering only while their
+    /// drive debt is above it.
     /// </summary>
     public static Task<Dictionary<int, long>> DebtLimits(AppDb db, int? personId = null) =>
         db.People.Where(p => personId == null || p.Id == personId)
-            .Select(p => new { p.Id, Limit = p.Group == null ? 0L : p.Group.DebtLimit })
+            .Select(p => new { p.Id, Limit = p.DebtLimit ?? (p.Group == null ? 0L : p.Group.DebtLimit) })
             .ToDictionaryAsync(x => x.Id, x => x.Limit);
 
     /// <summary>The settlement drive in progress, if the pantry manager started one and has not ended it.</summary>

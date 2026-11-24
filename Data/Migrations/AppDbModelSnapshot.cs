@@ -30,6 +30,9 @@ namespace OfficeBuffet.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Role")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SecurityStamp")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -45,6 +48,20 @@ namespace OfficeBuffet.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("AdminUsers");
+                });
+
+            modelBuilder.Entity("OfficeBuffet.Data.AppSetting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("Settings");
                 });
 
             modelBuilder.Entity("OfficeBuffet.Data.AuditEntry", b =>
@@ -447,6 +464,9 @@ namespace OfficeBuffet.Data.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("DebtLimit")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("GroupId")
                         .HasColumnType("INTEGER");

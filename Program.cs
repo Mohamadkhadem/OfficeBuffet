@@ -56,6 +56,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 builder.Services.AddAuthorization(o =>
 {
     o.AddPolicy(Roles.Admin, p => p.RequireRole(Roles.Admin));
+    o.AddPolicy(Roles.Supervisor, p => p.RequireRole(Roles.Admin).RequireRole(Roles.Supervisor));
     o.AddPolicy(Roles.Employee, p => p.RequireRole(Roles.Employee));
 });
 
